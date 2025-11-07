@@ -1,9 +1,19 @@
-name: Collect IPs and Save to Files
+name: 🌐 Collect IP Addresses and Save to Files
 
 on:
   schedule:
-    - cron: '30 * * * *'   # 每小时的第30分钟执行一次，UTC时间
-  workflow_dispatch:         # 允许手动触发
+    - cron: '30 * * * *'   # Run at minute 30 of every hour (UTC)
+  workflow_dispatch:        # Allow manual triggering
+    inputs:
+      reason:
+        description: 'Reason for manual trigger'
+        required: false
+        default: 'Manual execution'
+
+env:
+  PYTHON_VERSION: '3.x'
+  RETAIN_DAYS: 0
+  KEEP_MINIMUM_RUNS: 5
 
 permissions:
   contents: write
@@ -11,32 +21,172 @@ permissions:
 
 jobs:
   collect-ip-addresses:
+    name: 🚀 Collect IP Addresses
     runs-on: ubuntu-latest
+    outputs:
+      timestamp: ${{ steps.timestamp.outputs.time }}
+      files_changed: ${{ steps.commit-check.outputs.changes }}
+    
     steps:
-      - name: Delete previous workflow runs
+      # ========== INITIALIZATION ==========
+      - name: ⏰ Start Workflow
+        run: |
+          echo "🎯 Workflow triggered by: ${{ github.event_name }}"
+          echo "📅 Current time: $(date)"
+          echo "🔍 Repository: ${{ github.repository }}"
+          echo "🌿 Branch: ${{ github.ref }}"
+
+      - name: 📝 Generate Timestamp
+        id: timestamp
+        run: echo "time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+
+      # ========== CLEANUP ==========
+      - name: 🧹 Cleanup Old Workflow Runs
         uses: Mattraks/delete-workflow-runs@v2
         with:
-          retain_days: 0
-          keep_minimum_runs: 3
+          retain_days: ${{ env.RETAIN_DAYS }}
+          keep_minimum_runs: ${{ env.KEEP_MINIMUM_RUNS }}
+          repository: ${{ github.repository }}
 
-      - name: Check out repository
+      # ========== REPOSITORY SETUP ==========
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Python
+      # ========== PYTHON ENVIRONMENT ==========
+      - name: 🐍 Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
-      - name: Install dependencies
-        run: pip install requests ipaddress
+      - name: 📦 Install Dependencies
+        run: |
+          echo "🔧 Installing Python dependencies..."
+          pip install --upgrade pip
+          pip install requests ipaddress
+          echo "✅ Dependencies installed successfully"
 
-      - name: Run IP collection script
-        run: python autoip6.py
+      # ========== IP COLLECTION ==========
+      - name: 🌍 Collect IP Addresses
+        id: ip-collection
+        run: |
+          echo "🕸️ Starting IP address collection..."
+          start_time=$(date +%s)
+          
+          if python autoip6.py; then
+            end_time=$(date +%s)
+            duration=$((end_time - start_time))
+            echo "✅ IP collection completed successfully"
+            echo "⏱️ Execution time: ${duration} seconds"
+            echo "result=success" >> $GITHUB_OUTPUT
+          else
+            echo "❌ IP collection failed"
+            echo "result=failure" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
-      - name: Commit and push results
+      # ========== FILE VERIFICATION ==========
+      - name: 🔍 Verify Generated Files
+        id: file-check
+        run: |
+          echo "📋 Checking generated files..."
+          
+          if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
+            ip_count=$(wc -l < ip.txt | tr -d ' ')
+            echo "✅ ip.txt: $ip_count IP addresses"
+            echo "ip_count=$ip_count" >> $GITHUB_OUTPUT
+          else
+            echo "❌ ip.txt is missing or empty"
+            exit 1
+          fi
+          
+          if [ -f "ipv6.txt" ] && [ -s "ipv6.txt" ]; then
+            ipv6_count=$(wc -l < ipv6.txt | tr -d ' ')
+            echo "✅ ipv6.txt: $ipv6_count IPv6 addresses"
+            echo "ipv6_count=$ipv6_count" >> $GITHUB_OUTPUT
+          else
+            echo "❌ ipv6.txt is missing or empty"
+            exit 1
+          fi
+
+      # ========== CHANGES CHECK ==========
+      - name: 📊 Check for Changes
+        id: changes-check
+        run: |
+          echo "📊 Checking for file changes..."
+          if git diff --quiet HEAD -- ip.txt ipv6.txt; then
+            echo "📭 No changes detected in IP files"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "📬 Changes detected in IP files"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "📝 Changed files:"
+            git diff --name-only HEAD -- ip.txt ipv6.txt
+          fi
+
+      # ========== COMMIT CHANGES ==========
+      - name: 💾 Commit and Push Changes
+        id: auto-commit
+        if: steps.changes-check.outputs.has_changes == 'true'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: update ip.txt and ipv6.txt [auto]"
-          file_pattern: ip.txt ipv6.txt
-          commit_user_name: GitHub Action
-          commit_user_email: action@github.com
+          commit_message: |
+            chore: update IP addresses [auto]
+            
+            • Updated ip.txt: ${{ steps.file-check.outputs.ip_count }} IPv4 addresses
+            • Updated ipv6.txt: ${{ steps.file-check.outputs.ipv6_count }} IPv6 addresses
+            • Timestamp: ${{ steps.timestamp.outputs.time }}
+            • Trigger: ${{ github.event_name }}
+          commit_user_name: '🤖 GitHub Actions Bot'
+          commit_user_email: 'actions@users.noreply.github.com'
+          commit_options: '--signoff'
+          file_pattern: 'ip.txt ipv6.txt'
+          skip_fetch: true
+          skip_checkout: true
+
+      # ========== WORKFLOW SUMMARY ==========
+      - name: 📈 Workflow Summary
+        if: always()
+        run: |
+          echo "## 🎯 IP Collection Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Execution Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Execution time:** ${{ steps.timestamp.outputs.time }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📁 File Status" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPv4 addresses:** ${{ steps.file-check.outputs.ip_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPv6 addresses:** ${{ steps.file-check.outputs.ipv6_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if steps.changes-check.outputs.has_changes == 'true'; then
+            echo "### ✅ Changes Committed" >> $GITHUB_STEP_SUMMARY
+            echo "IP address files have been updated and committed automatically." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 📭 No Changes" >> $GITHUB_STEP_SUMMARY
+            echo "IP address files are already up to date." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Automatically generated by GitHub Actions*" >> $GITHUB_STEP_SUMMARY
+
+      # ========== NOTIFICATION ==========
+      - name: 🎉 Success Notification
+        if: success() && steps.changes-check.outputs.has_changes == 'true'
+        run: |
+          echo "🎉 Successfully updated IP addresses!"
+          echo "📊 IPv4: ${{ steps.file-check.outputs.ip_count }} addresses"
+          echo "📊 IPv6: ${{ steps.file-check.outputs.ipv6_count }} addresses"
+
+      - name: ℹ️ No Changes Notification
+        if: success() && steps.changes-check.outputs.has_changes == 'false'
+        run: |
+          echo "ℹ️ IP addresses are already up to date."
+          echo "📊 Current IPv4: ${{ steps.file-check.outputs.ip_count }} addresses"
+          echo "📊 Current IPv6: ${{ steps.file-check.outputs.ipv6_count }} addresses"
