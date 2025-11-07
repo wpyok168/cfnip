@@ -12,7 +12,14 @@ urls = [
     'https://addressesapi.090227.xyz/CloudFlareYes',
     'https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt',
     'https://www.wetest.vip/page/cloudflare/address_v6.html',
-    'https://www.wetest.vip/page/cloudflare/address_v4.html'
+    'https://www.wetest.vip/page/cloudflare/address_v4.html',
+    'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/030101-bestcf.txt',
+    'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/wetest-cloudflare-v4.txt',
+    'https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html',
+    'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/result.txt',
+    'https://raw.githubusercontent.com/camel52zhang/yxip/refs/heads/main/ip.txt',
+    'https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist.txt',
+    'https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt'
 ]
 #    'https://cf.090227.xyz', 
 #    'https://stock.hostmonit.com/CloudFlareYes',
