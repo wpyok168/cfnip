@@ -81,19 +81,31 @@ def extract_ips_from_text(text):
     return valid_ipv4, valid_ipv6
 
 def get_country_code_safe(ip, max_retries=3):
-    """安全地获取IP的国家代码，带重试机制"""
+    """安全地获取IP的国家代码，使用新的API接口"""
     for attempt in range(max_retries):
         try:
-            url = f'https://api.ipinfo.io/lite/{ip}?token=6f75ff6b8f013b'
+            url = f'https://api.mir6.com/api/ip_json?ip={ip}&lang=en'
             resp = requests.get(url, headers=headers, timeout=10)
             
             if resp.status_code == 200:
-                # 处理可能的JSON解析错误
+                # 处理JSON解析
                 try:
                     data = resp.json()
-                    country_code = data.get('country_code') or data.get('country') or 'ZZ'
-                    print(f"✓ {ip} -> {country_code}")
-                    return country_code
+                    
+                    # 检查API返回状态
+                    if data.get('code') == 200:
+                        country_code = data.get('data', {}).get('countryCode', 'ZZ')
+                        if country_code and country_code != 'ZZ':
+                            print(f"✓ {ip} -> {country_code}")
+                            return country_code
+                        else:
+                            print(f"⚠ {ip} -> 未找到国家代码")
+                            return 'ZZ'
+                    else:
+                        print(f"API返回错误: {data.get('msg', 'Unknown error')} for {ip}")
+                        time.sleep(2)
+                        continue
+                        
                 except json.JSONDecodeError:
                     print(f"JSON解析错误 for {ip}, 响应: {resp.text[:100]}")
                     time.sleep(2)
@@ -160,8 +172,6 @@ def save_results_with_country(ip_set, filename, is_ipv6=False):
         
         if country_code == 'ZZ':
             failed_ips.append(ip)
-            # 即使失败也保存，但标记为未知
-            country_code = 'ZZ'
         
         if is_ipv6:
             results.append(f"[{ip}]:8443#{country_code}-IPV6")
@@ -170,9 +180,9 @@ def save_results_with_country(ip_set, filename, is_ipv6=False):
         
         # 进度显示
         if i % 5 == 0 or i == len(sorted_ips):
-            print(f'进度: {i}/{len(sorted_ips)}')
+            print(f'进度: {i}/{len(sorted_ips)} (成功率: {((i - len(failed_ips)) / i * 100):.1f}%)')
         
-        # 避免API限制，但比之前间隔稍短
+        # 避免API限制
         time.sleep(0.8)
     
     # 保存结果
@@ -196,6 +206,7 @@ def verify_results():
             print(f'\n验证 {filename}:')
             with open(filename, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
+                print(f'总行数: {len(lines)}')
                 for i, line in enumerate(lines[:5], 1):  # 只检查前5行
                     print(f'  样例 {i}: {line.strip()}')
 
