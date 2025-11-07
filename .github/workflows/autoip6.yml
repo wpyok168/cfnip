@@ -2,8 +2,8 @@ name: 📡 Collect IP Addresses and Save to Files
 
 on:
   schedule:
-    - cron: '30 * * * *'   # Execute at minute 30 of every hour (UTC)
-  workflow_dispatch:        # Allow manual triggering
+    - cron: '30 * * * *'
+  workflow_dispatch:
     inputs:
       reason:
         description: 'Reason for manual trigger'
@@ -11,13 +11,10 @@ on:
         default: 'Manual execution'
 
 env:
-  MAX_RETRIES: 3
-  TIMEOUT_SECONDS: 30
   FILES_TO_UPDATE: 'ip.txt ipv6.txt'
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   collect-ip-addresses:
@@ -26,106 +23,165 @@ jobs:
     timeout-minutes: 10
     
     steps:
-      # Step 1: Clean up old workflow runs
-      - name: 🗑️ Delete Previous Workflow Runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          retain_days: 0
-          keep_minimum_runs: 3
-          repository: ${{ github.repository }}
-          
-      # Step 2: Checkout repository
+      # Step 1: Checkout repository
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
-          
-      # Step 3: Set up Python environment
+
+      # Step 2: Set up Python environment
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          
-      # Step 4: Install Python dependencies
-      - name: 📦 Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests ipaddress beautifulsoup4
-        timeout-minutes: 2
-        
-      # Step 5: Create script directory if needed
-      - name: 📁 Ensure Script Directory
-        run: |
-          if [ ! -f "autoip6.py" ]; then
-            echo "⚠️ Warning: autoip6.py not found, creating basic template"
-            cat > autoip6.py << 'EOF'
-          # IP Collection Script Template
-          import requests
-          import json
-          
-          def main():
-              print("📡 Starting IP collection...")
-              # Add your IP collection logic here
-              print("✅ IP collection completed")
-              
-          if __name__ == "__main__":
-              main()
-          EOF
-          fi
-          
-      # Step 6: Execute IP collection script
+
+      # Step 3: Create and run IP collection script
       - name: 🚀 Run IP Collection Script
         run: |
-          echo "🕐 Starting IP collection at $(date)"
-          python autoip6.py
-          echo "✅ IP collection finished at $(date)"
-        timeout-minutes: 5
+          cat > autoip6.py << 'EOF'
+#!/usr/bin/env python3
+"""
+IP Address Collection Script
+Collects IPv4 and IPv6 addresses from various sources
+"""
+
+import requests
+import re
+import json
+from datetime import datetime
+import sys
+
+def get_public_ipv4():
+    """Get public IPv4 address"""
+    try:
+        response = requests.get('https://api.ipify.org?format=json', timeout=10)
+        if response.status_code == 200:
+            return response.json()['ip']
+    except Exception as e:
+        print(f"❌ Failed to get IPv4: {e}")
+    return None
+
+def get_public_ipv6():
+    """Get public IPv6 address"""
+    try:
+        response = requests.get('https://api64.ipify.org?format=json', timeout=10)
+        if response.status_code == 200:
+            ip = response.json()['ip']
+            # Check if it's actually IPv6
+            if ':' in ip:
+                return ip
+    except Exception as e:
+        print(f"❌ Failed to get IPv6: {e}")
+    return None
+
+def get_cloudflare_ips():
+    """Get Cloudflare IP ranges"""
+    try:
+        response = requests.get('https://api.cloudflare.com/client/v4/ips', timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                'ipv4_cidrs': data['result']['ipv4_cidrs'],
+                'ipv6_cidrs': data['result']['ipv6_cidrs']
+            }
+    except Exception as e:
+        print(f"❌ Failed to get Cloudflare IPs: {e}")
+    return None
+
+def validate_ip(ip):
+    """Simple IP validation"""
+    ipv4_pattern = r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$'
+    ipv6_pattern = r'^[0-9a-fA-F:]+$'
+    
+    if re.match(ipv4_pattern, ip):
+        parts = ip.split('.')
+        if all(0 <= int(part) <= 255 for part in parts):
+            return 'ipv4'
+    elif re.match(ipv6_pattern, ip) and ':' in ip:
+        return 'ipv6'
+    return None
+
+def main():
+    print("🚀 Starting IP address collection...")
+    
+    # Collect IPs
+    ipv4 = get_public_ipv4()
+    ipv6 = get_public_ipv6()
+    cloudflare_ips = get_cloudflare_ips()
+    
+    # Prepare data for files
+    ipv4_list = []
+    ipv6_list = []
+    
+    # Add public IPs
+    if ipv4:
+        ipv4_list.append(ipv4)
+        print(f"✅ Found IPv4: {ipv4}")
+    
+    if ipv6:
+        ipv6_list.append(ipv6)
+        print(f"✅ Found IPv6: {ipv6}")
+    
+    # Add Cloudflare IPs if available
+    if cloudflare_ips:
+        ipv4_list.extend(cloudflare_ips['ipv4_cidrs'])
+        ipv6_list.extend(cloudflare_ips['ipv6_cidrs'])
+        print(f"✅ Added {len(cloudflare_ips['ipv4_cidrs'])} Cloudflare IPv4 ranges")
+        print(f"✅ Added {len(cloudflare_ips['ipv6_cidrs'])} Cloudflare IPv6 ranges")
+    
+    # Add some common IPs as fallback
+    if not ipv4_list:
+        ipv4_list.extend(['8.8.8.8', '1.1.1.1', '9.9.9.9'])
+        print("⚠️ Using fallback IPv4 addresses")
+    
+    if not ipv6_list:
+        ipv6_list.extend(['2001:4860:4860::8888', '2606:4700:4700::1111', '2620:fe::fe'])
+        print("⚠️ Using fallback IPv6 addresses")
+    
+    # Write to files
+    try:
+        with open('ip.txt', 'w') as f:
+            f.write(f"# IPv4 Address Collection\n")
+            f.write(f"# Generated at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+            f.write(f"# Total IPv4 addresses: {len(ipv4_list)}\n\n")
+            for ip in ipv4_list:
+                f.write(f"{ip}\n")
         
-      # Step 7: Verify generated files
+        with open('ipv6.txt', 'w') as f:
+            f.write(f"# IPv6 Address Collection\n")
+            f.write(f"# Generated at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+            f.write(f"# Total IPv6 addresses: {len(ipv6_list)}\n\n")
+            for ip in ipv6_list:
+                f.write(f"{ip}\n")
+        
+        print(f"✅ Successfully wrote {len(ipv4_list)} IPv4 addresses to ip.txt")
+        print(f"✅ Successfully wrote {len(ipv6_list)} IPv6 addresses to ipv6.txt")
+        print("🎉 IP collection completed successfully!")
+        
+    except Exception as e:
+        print(f"❌ Failed to write files: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+EOF
+
+          # Run the script
+          python autoip6.py
+
+      # Step 4: Verify generated files
       - name: 🔍 Verify Generated Files
         run: |
           echo "📋 Checking generated files:"
-          for file in $FILES_TO_UPDATE; do
-            if [ -f "$file" ]; then
-              echo "✅ $file exists ($(wc -l < "$file") lines)"
-              head -3 "$file" | while read line; do echo "   📝 $line"; done
-            else
-              echo "❌ $file not found"
-            fi
-          done
-          
-      # Step 8: Commit and push changes
+          ls -la ip.txt ipv6.txt 2>/dev/null || echo "⚠️ Files not found yet"
+          echo "--- ip.txt content sample ---"
+          head -5 ip.txt 2>/dev/null || echo "File not found"
+          echo "--- ipv6.txt content sample ---"
+          head -5 ipv6.txt 2>/dev/null || echo "File not found"
+
+      # Step 5: Commit and push changes
       - name: 💾 Commit and Push Results
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: |
-            chore: update IP address files [auto]
-            
-            - Automated IP collection
-            - Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-            - Workflow: ${{ github.workflow }}
-            - Run: ${{ github.run_id }}
-          commit_user_name: '🤖 GitHub Actions Bot'
-          commit_user_email: 'actions@users.noreply.github.com'
-          file_pattern: ${{ env.FILES_TO_UPDATE }}
-          commit_options: '--signoff'
-          push_options: '--force'
-          skip_fetch: true
-          
-      # Step 9: Success notification
-      - name: ✅ Success Notification
-        if: success()
-        run: |
-          echo "🎉 IP collection completed successfully!"
-          echo "📊 Files updated: $FILES_TO_UPDATE"
-          echo "🔗 Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          
-      # Step 10: Failure notification
-      - name: ❌ Failure Notification
-        if: failure()
-        run: |
-          echo "💥 IP collection failed!"
-          echo "📝 Check the logs for details: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          exit 1
+          commit_message: "chore: update IP address files [auto]"
+          commit_user_name: "GitHub Actions"
+          commit_user_email: "actions@users.noreply.github.com"
+          file_pattern: "ip.txt ipv6.txt"
