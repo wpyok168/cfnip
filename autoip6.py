@@ -5,6 +5,8 @@ import time
 import ipaddress
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from queue import Queue
 
 # 目标URL列表
 urls = [
@@ -34,6 +36,12 @@ headers = {
     'Accept': 'application/json',
     'Referer': 'https://www.baidu.com/'
 }
+
+# 全局变量用于进度显示
+progress_lock = threading.Lock()
+completed_count = 0
+total_count = 0
+success_count = 0
 
 def clean_old_files():
     """清理旧文件"""
@@ -82,70 +90,57 @@ def extract_ips_from_text(text):
     
     return valid_ipv4, valid_ipv6
 
-def get_location_from_baidu(ip, max_retries=2):
+def get_location_from_baidu(ip):
     """从百度API获取IP的地理位置信息"""
-    for attempt in range(max_retries):
-        try:
-            url = f'https://opendata.baidu.com/api.php?co=&resource_id=6006&oe=utf8&query={ip}&lang=en'
-            resp = requests.get(url, headers=headers, timeout=10)
-            
-            print(f"调试: 查询 {ip} - 状态码: {resp.status_code}")
-            
-            if resp.status_code == 200:
-                try:
-                    data = resp.json()
-                    print(f"调试: API返回数据: {data}")
-                    
-                    # 检查百度API返回的status字段
-                    status = data.get('status')
-                    if status == '0':  # 百度API成功状态为'0'
-                        if data.get('data') and len(data['data']) > 0:
-                            location = data['data'][0].get('location', '未知')
-                            if location and location != '未知':
-                                print(f"✓ {ip} -> {location}")
-                                return location
-                            else:
-                                print(f"⚠ {ip} -> 未找到位置信息")
-                                return '未知'
-                        else:
-                            print(f"⚠ {ip} -> 返回数据为空")
-                            return '未知'
-                    else:
-                        error_msg = data.get('message', 'Unknown error')
-                        print(f"API返回status {status}: {error_msg} for {ip}")
-                        # 如果是频率限制，等待更长时间
-                        if status == '202' or 'limit' in str(error_msg).lower():
-                            wait_time = 30
-                            print(f"频率限制，等待{wait_time}秒...")
-                            time.sleep(wait_time)
-                            continue
-                        return '未知'
-                        
-                except json.JSONDecodeError as e:
-                    print(f"JSON解析错误 for {ip}: {e}")
-                    print(f"原始响应: {resp.text[:200]}")
-                    time.sleep(3)
-                    continue
-            else:
-                print(f"HTTP错误 {resp.status_code} for {ip}")
-                if resp.status_code == 429:
-                    wait_time = 30
-                    print(f"HTTP频率限制，等待{wait_time}秒...")
-                    time.sleep(wait_time)
-                    continue
-                time.sleep(2)
+    try:
+        url = f'https://opendata.baidu.com/api.php?co=&resource_id=6006&oe=utf8&query={ip}&lang=en'
+        resp = requests.get(url, headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
                 
-        except requests.exceptions.Timeout:
-            print(f"查询超时 {ip} (尝试 {attempt + 1}/{max_retries})")
-            time.sleep(3)
-        except Exception as e:
-            print(f"查询异常 {ip}: {e} (尝试 {attempt + 1}/{max_retries})")
-            time.sleep(3)
-    
-    print(f"✗ 无法获取 {ip} 的地理位置")
-    return '未知'
+                # 检查百度API返回的status字段
+                status = data.get('status')
+                if status == '0':  # 百度API成功状态为'0'
+                    if data.get('data') and len(data['data']) > 0:
+                        location = data['data'][0].get('location', '未知')
+                        if location and location != '未知':
+                            return location, True
+                        else:
+                            return '未知', False
+                    else:
+                        return '未知', False
+                else:
+                    return '未知', False
+                    
+            except json.JSONDecodeError:
+                return '未知', False
+        else:
+            return '未知', False
+            
+    except Exception as e:
+        return '未知', False
 
-def process_urls_parallel(urls, max_workers=3):
+def process_single_ip(ip):
+    """处理单个IP地址查询"""
+    global completed_count, success_count
+    
+    location, success = get_location_from_baidu(ip)
+    
+    with progress_lock:
+        completed_count += 1
+        if success:
+            success_count += 1
+        
+        # 每处理10个IP或完成时显示进度
+        if completed_count % 10 == 0 or completed_count == total_count:
+            success_rate = (success_count / completed_count * 100) if completed_count > 0 else 0
+            print(f'进度: {completed_count}/{total_count} (成功率: {success_rate:.1f}%)')
+    
+    return ip, location, success
+
+def process_urls_parallel(urls, max_workers=5):
     """并行处理URL获取"""
     all_ipv4 = set()
     all_ipv6 = set()
@@ -167,45 +162,66 @@ def process_urls_parallel(urls, max_workers=3):
     
     return all_ipv4, all_ipv6
 
-def save_results_with_location(ip_set, filename, is_ipv6=False):
-    """保存结果到文件，确保IP和地理位置正确对应"""
-    if not ip_set:
-        print(f'未找到有效的{"IPv6" if is_ipv6 else "IPv4"}地址。')
-        return
+def query_ips_parallel(ip_set, max_workers=10):
+    """并行查询IP地址的地理位置"""
+    global completed_count, total_count, success_count
     
-    # 排序IP地址
-    if is_ipv6:
-        sorted_ips = sorted(ip_set)
-    else:
-        sorted_ips = sorted(ip_set, key=lambda ip: [int(part) for part in ip.split('.')])
-    
-    results = []
-    failed_ips = []
+    # 重置计数器
+    completed_count = 0
+    total_count = len(ip_set)
     success_count = 0
     
-    print(f'\n开始查询 {len(sorted_ips)} 个{"IPv6" if is_ipv6 else "IPv4"}地址的地理位置...')
+    if not ip_set:
+        return []
     
-    # 逐个查询，确保顺序对应
-    for i, ip in enumerate(sorted_ips, 1):
-        location = get_location_from_baidu(ip)
+    print(f'开始并行查询 {total_count} 个IP地址的地理位置...')
+    print(f'使用 {max_workers} 个线程同时查询')
+    
+    results = []
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交所有任务
+        future_to_ip = {executor.submit(process_single_ip, ip): ip for ip in ip_set}
         
+        # 收集结果
+        for future in as_completed(future_to_ip):
+            try:
+                ip, location, success = future.result()
+                results.append((ip, location))
+            except Exception as e:
+                ip = future_to_ip[future]
+                print(f"处理IP {ip} 时发生异常: {e}")
+                results.append((ip, '未知'))
+    
+    # 最终进度显示
+    success_rate = (success_count / total_count * 100) if total_count > 0 else 0
+    print(f'查询完成: 总计 {total_count}, 成功 {success_count}, 成功率: {success_rate:.1f}%')
+    
+    return results
+
+def save_results_with_location(ip_results, filename, is_ipv6=False):
+    """保存结果到文件"""
+    if not ip_results:
+        print(f'没有要保存的{"IPv6" if is_ipv6 else "IPv4"}地址结果。')
+        return
+    
+    # 按IP地址排序结果
+    if is_ipv6:
+        sorted_results = sorted(ip_results, key=lambda x: x[0])
+    else:
+        sorted_results = sorted(ip_results, key=lambda x: [int(part) for part in x[0].split('.')])
+    
+    results = []
+    failed_count = 0
+    
+    for ip, location in sorted_results:
         if location == '未知':
-            failed_ips.append(ip)
-        else:
-            success_count += 1
+            failed_count += 1
         
         if is_ipv6:
             results.append(f"[{ip}]:8443#{location}-IPV6")
         else:
             results.append(f"{ip}:8443#{location}")
-        
-        # 进度显示
-        if i % 3 == 0 or i == len(sorted_ips):
-            success_rate = (success_count / i * 100) if i > 0 else 0
-            print(f'进度: {i}/{len(sorted_ips)} (成功率: {success_rate:.1f}%)')
-        
-        # 增加间隔时间避免API限制
-        time.sleep(1.5)
     
     # 保存结果
     with open(filename, 'w', encoding='utf-8') as file:
@@ -213,14 +229,7 @@ def save_results_with_location(ip_set, filename, is_ipv6=False):
             file.write(line + '\n')
     
     print(f'\n已保存 {len(results)} 个{"IPv6" if is_ipv6 else "IPv4"}地址到 {filename}')
-    print(f'成功获取地理位置: {success_count}, 失败: {len(failed_ips)}')
-    
-    if failed_ips:
-        print(f'失败的IP列表 (前10个):')
-        for ip in failed_ips[:10]:
-            print(f'  {ip}')
-        if len(failed_ips) > 10:
-            print(f'  ... 还有 {len(failed_ips) - 10} 个')
+    print(f'成功获取地理位置: {len(results) - failed_count}, 失败: {failed_count}')
 
 def verify_results():
     """验证结果文件中的IP和地理位置对应关系"""
@@ -238,9 +247,10 @@ def test_baidu_api():
     test_ips = ['8.8.8.8', '1.1.1.1', '162.159.58.65']
     print("测试百度API接口...")
     for ip in test_ips:
-        location = get_location_from_baidu(ip)
-        print(f"测试 {ip} -> {location}")
-        time.sleep(2)
+        location, success = get_location_from_baidu(ip)
+        status = "✓" if success else "✗"
+        print(f"{status} 测试 {ip} -> {location}")
+        time.sleep(0.5)  # 短暂延迟避免触发限制
 
 def main():
     """主函数"""
@@ -252,16 +262,21 @@ def main():
     clean_old_files()
     
     # 并行获取IP地址
+    print("\n开始从各数据源收集IP地址...")
     unique_ipv4, unique_ipv6 = process_urls_parallel(urls)
     
     print(f"\n收集完成: IPv4: {len(unique_ipv4)}个, IPv6: {len(unique_ipv6)}个")
     
-    # 保存结果（确保顺序对应）
+    # 并行查询地理位置并保存结果
     if unique_ipv4:
-        save_results_with_location(unique_ipv4, 'ip.txt', False)
+        print(f"\n开始处理IPv4地址...")
+        ipv4_results = query_ips_parallel(unique_ipv4, max_workers=15)  # 增加IPv4查询线程数
+        save_results_with_location(ipv4_results, 'ip.txt', False)
     
     if unique_ipv6:
-        save_results_with_location(unique_ipv6, 'ipv6.txt', True)
+        print(f"\n开始处理IPv6地址...")
+        ipv6_results = query_ips_parallel(unique_ipv6, max_workers=10)  # IPv6查询线程数稍少
+        save_results_with_location(ipv6_results, 'ipv6.txt', True)
     
     # 验证结果
     verify_results()
