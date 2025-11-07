@@ -11,17 +11,17 @@ urls = [
     'https://ip.164746.xyz', 
     'https://api.uouin.com/cloudflare.html',
     'https://ipdb.api.030101.xyz/?type=bestcf&country=true',
-    #'https://addressesapi.090227.xyz/CloudFlareYes',
-    #'https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt',
-    #'https://www.wetest.vip/page/cloudflare/address_v6.html',
-   # 'https://www.wetest.vip/page/cloudflare/address_v4.html',
-    #'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/030101-bestcf.txt',
-    #'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/wetest-cloudflare-v4.txt',
-    #'https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html',
-    #'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/result.txt',
-    #'https://raw.githubusercontent.com/camel52zhang/yxip/refs/heads/main/ip.txt',
-    #'https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist.txt',
-    #'https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt'
+    'https://addressesapi.090227.xyz/CloudFlareYes',
+    'https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt',
+    'https://www.wetest.vip/page/cloudflare/address_v6.html',
+    'https://www.wetest.vip/page/cloudflare/address_v4.html',
+    'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/030101-bestcf.txt',
+    'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/wetest-cloudflare-v4.txt',
+    'https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html',
+    'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/result.txt',
+    'https://raw.githubusercontent.com/camel52zhang/yxip/refs/heads/main/ip.txt',
+    'https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist.txt',
+    'https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt'
 ]
 
 # 改进的IP地址正则表达式
@@ -32,7 +32,7 @@ ipv6_pattern = r'(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Accept': 'application/json',
-    'Referer': 'https://api.mir6.com/'
+    'Referer': 'https://www.baidu.com/'
 }
 
 def clean_old_files():
@@ -82,12 +82,12 @@ def extract_ips_from_text(text):
     
     return valid_ipv4, valid_ipv6
 
-def get_country_code_safe(ip, max_retries=2):
-    """安全地获取IP的国家代码，使用新的API接口"""
+def get_location_from_baidu(ip, max_retries=2):
+    """从百度API获取IP的地理位置信息"""
     for attempt in range(max_retries):
         try:
-            url = f'https://api.mir6.com/api/ip_json?ip={ip}&lang=en'
-            resp = requests.get(url, headers=headers, timeout=15)
+            url = f'https://opendata.baidu.com/api.php?co=&resource_id=6006&oe=utf8&query={ip}&lang=en'
+            resp = requests.get(url, headers=headers, timeout=10)
             
             print(f"调试: 查询 {ip} - 状态码: {resp.status_code}")
             
@@ -96,26 +96,30 @@ def get_country_code_safe(ip, max_retries=2):
                     data = resp.json()
                     print(f"调试: API返回数据: {data}")
                     
-                    # 检查API返回的code字段
-                    api_code = data.get('code')
-                    if api_code == 200:
-                        country_code = data.get('data', {}).get('countryCode', 'ZZ')
-                        if country_code and country_code != 'ZZ':
-                            print(f"✓ {ip} -> {country_code}")
-                            return country_code
+                    # 检查百度API返回的status字段
+                    status = data.get('status')
+                    if status == '0':  # 百度API成功状态为'0'
+                        if data.get('data') and len(data['data']) > 0:
+                            location = data['data'][0].get('location', '未知')
+                            if location and location != '未知':
+                                print(f"✓ {ip} -> {location}")
+                                return location
+                            else:
+                                print(f"⚠ {ip} -> 未找到位置信息")
+                                return '未知'
                         else:
-                            print(f"⚠ {ip} -> 未找到国家代码或为ZZ")
-                            return 'ZZ'
+                            print(f"⚠ {ip} -> 返回数据为空")
+                            return '未知'
                     else:
-                        error_msg = data.get('msg', 'Unknown error')
-                        print(f"API返回code {api_code}: {error_msg} for {ip}")
+                        error_msg = data.get('message', 'Unknown error')
+                        print(f"API返回status {status}: {error_msg} for {ip}")
                         # 如果是频率限制，等待更长时间
-                        if api_code == 429 or 'limit' in error_msg.lower():
+                        if status == '202' or 'limit' in str(error_msg).lower():
                             wait_time = 30
                             print(f"频率限制，等待{wait_time}秒...")
                             time.sleep(wait_time)
                             continue
-                        return 'ZZ'
+                        return '未知'
                         
                 except json.JSONDecodeError as e:
                     print(f"JSON解析错误 for {ip}: {e}")
@@ -138,10 +142,10 @@ def get_country_code_safe(ip, max_retries=2):
             print(f"查询异常 {ip}: {e} (尝试 {attempt + 1}/{max_retries})")
             time.sleep(3)
     
-    print(f"✗ 无法获取 {ip} 的国家代码")
-    return 'ZZ'
+    print(f"✗ 无法获取 {ip} 的地理位置")
+    return '未知'
 
-def process_urls_parallel(urls, max_workers=3):  # 减少工作线程数
+def process_urls_parallel(urls, max_workers=3):
     """并行处理URL获取"""
     all_ipv4 = set()
     all_ipv6 = set()
@@ -163,8 +167,8 @@ def process_urls_parallel(urls, max_workers=3):  # 减少工作线程数
     
     return all_ipv4, all_ipv6
 
-def save_results_with_country(ip_set, filename, is_ipv6=False):
-    """保存结果到文件，确保IP和国家代码正确对应"""
+def save_results_with_location(ip_set, filename, is_ipv6=False):
+    """保存结果到文件，确保IP和地理位置正确对应"""
     if not ip_set:
         print(f'未找到有效的{"IPv6" if is_ipv6 else "IPv4"}地址。')
         return
@@ -179,24 +183,24 @@ def save_results_with_country(ip_set, filename, is_ipv6=False):
     failed_ips = []
     success_count = 0
     
-    print(f'\n开始查询 {len(sorted_ips)} 个{"IPv6" if is_ipv6 else "IPv4"}地址的国家代码...')
+    print(f'\n开始查询 {len(sorted_ips)} 个{"IPv6" if is_ipv6 else "IPv4"}地址的地理位置...')
     
     # 逐个查询，确保顺序对应
     for i, ip in enumerate(sorted_ips, 1):
-        country_code = get_country_code_safe(ip)
+        location = get_location_from_baidu(ip)
         
-        if country_code == 'ZZ':
+        if location == '未知':
             failed_ips.append(ip)
         else:
             success_count += 1
         
         if is_ipv6:
-            results.append(f"[{ip}]:8443#{country_code}-IPV6")
+            results.append(f"[{ip}]:8443#{location}-IPV6")
         else:
-            results.append(f"{ip}:8443#{country_code}")
+            results.append(f"{ip}:8443#{location}")
         
         # 进度显示
-        if i % 3 == 0 or i == len(sorted_ips):  # 减少显示频率
+        if i % 3 == 0 or i == len(sorted_ips):
             success_rate = (success_count / i * 100) if i > 0 else 0
             print(f'进度: {i}/{len(sorted_ips)} (成功率: {success_rate:.1f}%)')
         
@@ -209,7 +213,7 @@ def save_results_with_country(ip_set, filename, is_ipv6=False):
             file.write(line + '\n')
     
     print(f'\n已保存 {len(results)} 个{"IPv6" if is_ipv6 else "IPv4"}地址到 {filename}')
-    print(f'成功获取国家代码: {success_count}, 失败: {len(failed_ips)}')
+    print(f'成功获取地理位置: {success_count}, 失败: {len(failed_ips)}')
     
     if failed_ips:
         print(f'失败的IP列表 (前10个):')
@@ -219,7 +223,7 @@ def save_results_with_country(ip_set, filename, is_ipv6=False):
             print(f'  ... 还有 {len(failed_ips) - 10} 个')
 
 def verify_results():
-    """验证结果文件中的IP和国家代码对应关系"""
+    """验证结果文件中的IP和地理位置对应关系"""
     for filename in ['ip.txt', 'ipv6.txt']:
         if os.path.exists(filename):
             print(f'\n验证 {filename}:')
@@ -229,13 +233,13 @@ def verify_results():
                 for i, line in enumerate(lines[:5], 1):
                     print(f'  样例 {i}: {line.strip()}')
 
-def test_api():
-    """测试API接口是否正常工作"""
-    test_ips = ['8.8.8.8', '1.1.1.1', '2001:4860:4860::8888']
-    print("测试API接口...")
+def test_baidu_api():
+    """测试百度API接口是否正常工作"""
+    test_ips = ['8.8.8.8', '1.1.1.1', '162.159.58.65']
+    print("测试百度API接口...")
     for ip in test_ips:
-        country = get_country_code_safe(ip)
-        print(f"测试 {ip} -> {country}")
+        location = get_location_from_baidu(ip)
+        print(f"测试 {ip} -> {location}")
         time.sleep(2)
 
 def main():
@@ -243,7 +247,7 @@ def main():
     print("开始收集Cloudflare IP地址...")
     
     # 先测试API
-    test_api()
+    test_baidu_api()
     
     clean_old_files()
     
@@ -254,10 +258,10 @@ def main():
     
     # 保存结果（确保顺序对应）
     if unique_ipv4:
-        save_results_with_country(unique_ipv4, 'ip.txt', False)
+        save_results_with_location(unique_ipv4, 'ip.txt', False)
     
     if unique_ipv6:
-        save_results_with_country(unique_ipv6, 'ipv6.txt', True)
+        save_results_with_location(unique_ipv6, 'ipv6.txt', True)
     
     # 验证结果
     verify_results()
