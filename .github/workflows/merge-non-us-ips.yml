@@ -36,11 +36,6 @@ jobs:
           echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
           echo "目标处理日期: $TARGET_DATE"
           
-      - name: Show files before processing
-        run: |
-          echo "=== 处理前的文件 ==="
-          find non_us_ips -name "*.txt" | head -10 || echo "没有找到txt文件"
-          
       - name: Merge and deduplicate IPs
         run: |
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
@@ -50,22 +45,34 @@ jobs:
         run: |
           python .github/scripts/cleanup_old_files.py
           
-      - name: Show files after processing
+      - name: Check if merged file exists
         run: |
-          echo "=== 处理后的文件 ==="
-          find non_us_ips -name "*.txt" | head -10 || echo "没有找到txt文件"
+          # 转换日期格式 YYYYMMDD -> YYYY-MM-DD
+          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
+          FORMATTED_DATE="${TARGET_DATE:0:4}-${TARGET_DATE:4:2}-${TARGET_DATE:6:2}"
+          MERGED_FILE="non_us_ips/merged/merged_ips_${FORMATTED_DATE}.txt"
+          
+          if [ -f "$MERGED_FILE" ]; then
+            echo "✅ 合并文件已创建: $MERGED_FILE"
+            echo "文件行数: $(wc -l < "$MERGED_FILE")"
+          else
+            echo "❌ 合并文件未创建"
+            exit 1
+          fi
           
       - name: Commit and push changes
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           
-          # 检查是否有更改
-          if git diff --quiet && git diff --staged --quiet; then
+          # 添加所有更改
+          git add -A
+          
+          # 检查是否有更改需要提交
+          if git diff --cached --quiet; then
             echo "🟡 没有检测到更改，跳过提交"
           else
             echo "🟢 检测到更改，准备提交"
-            git add .
             git status
             git commit -m "Auto: Merge and deduplicate non-US IPs for ${{ steps.date_calc.outputs.target_date }} [$(date +%Y-%m-%d)]"
             git push
