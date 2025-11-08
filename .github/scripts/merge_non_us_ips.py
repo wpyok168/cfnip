@@ -4,27 +4,23 @@ import sys
 from datetime import datetime, timedelta
 import glob
 
-def debug_info():
-    """打印调试信息"""
-    print("=== 调试信息 ===")
-    print(f"当前工作目录: {os.getcwd()}")
-    print(f"Python版本: {sys.version}")
-    print(f"当前UTC时间: {datetime.utcnow()}")
+def get_available_dates():
+    """获取所有可用的日期目录"""
+    base_dir = "non_us_ips"
+    if not os.path.exists(base_dir):
+        return []
     
-    # 检查 non_us_ips 目录
-    if os.path.exists("non_us_ips"):
-        print("non_us_ips 目录存在")
-        items = os.listdir("non_us_ips")
-        print(f"目录内容: {items}")
-    else:
-        print("non_us_ips 目录不存在")
-        # 创建示例目录结构用于测试
-        os.makedirs("non_us_ips/2024-01-15", exist_ok=True)
-        os.makedirs("non_us_ips/merged", exist_ok=True)
-        # 创建示例文件
-        with open("non_us_ips/2024-01-15/example.txt", "w") as f:
-            f.write("192.168.1.1\n192.168.1.2\n")
-        print("已创建示例目录和文件")
+    dates = []
+    for item in os.listdir(base_dir):
+        if item == "merged":
+            continue
+        try:
+            datetime.strptime(item, '%Y-%m-%d')
+            dates.append(item)
+        except ValueError:
+            continue
+    
+    return sorted(dates)
 
 def merge_non_us_ips(target_date):
     """
@@ -41,59 +37,77 @@ def merge_non_us_ips(target_date):
     
     # 确保merged目录存在
     os.makedirs(merged_dir, exist_ok=True)
-    print(f"确保合并目录存在: {os.path.exists(merged_dir)}")
     
     # 检查目标目录是否存在
     if not os.path.exists(target_dir):
-        print(f"错误: 目录 {target_dir} 不存在")
-        print("可用的日期目录:")
-        for item in os.listdir("non_us_ips"):
-            if os.path.isdir(os.path.join("non_us_ips", item)) and item != "merged":
-                print(f"  - {item}")
-        return False
+        print(f"❌ 错误: 目录 {target_dir} 不存在")
+        
+        # 显示可用的日期
+        available_dates = get_available_dates()
+        if available_dates:
+            print("可用的日期目录:")
+            for date in available_dates[-10:]:  # 显示最近10个日期
+                print(f"  - {date}")
+            
+            # 建议使用最近的日期
+            latest_date = available_dates[-1] if available_dates else None
+            if latest_date:
+                print(f"💡 建议: 使用最近的日期 {latest_date}")
+                use_latest = input("是否使用最近日期? (y/n): ").strip().lower()
+                if use_latest == 'y':
+                    target_date = latest_date
+                    target_dir = f"non_us_ips/{target_date}"
+                    print(f"使用日期: {target_date}")
+                else:
+                    return False
+        else:
+            print("没有可用的日期目录")
+            return False
     
     # 查找所有txt文件
     pattern = os.path.join(target_dir, "*.txt")
-    print(f"搜索模式: {pattern}")
     files = glob.glob(pattern)
     
     if not files:
-        print(f"警告: 在 {target_dir} 中未找到 .txt 文件")
+        print(f"⚠️ 警告: 在 {target_dir} 中未找到 .txt 文件")
         # 列出目录中的所有文件
         all_files = os.listdir(target_dir)
-        print(f"目录中的文件: {all_files}")
-        return False
+        if all_files:
+            print(f"目录中的文件: {all_files}")
+            # 尝试处理所有文件，不仅仅是.txt
+            files = [os.path.join(target_dir, f) for f in all_files if os.path.isfile(os.path.join(target_dir, f))]
+            print(f"将处理所有 {len(files)} 个文件")
+        else:
+            print("目录为空")
+            return False
     
-    print(f"找到 {len(files)} 个文件进行合并: {files}")
+    print(f"找到 {len(files)} 个文件进行合并")
     
     # 合并文件
     merged_file = os.path.join(merged_dir, f"merged_ips_{target_date}.txt")
     unique_ips = set()
     
-    total_lines = 0
     for file_path in files:
         try:
-            print(f"处理文件: {file_path}")
+            print(f"处理文件: {os.path.basename(file_path)}")
             with open(file_path, 'r', encoding='utf-8') as f:
-                file_lines = 0
-                for line_num, line in enumerate(f, 1):
+                file_ips = 0
+                for line in f:
                     ip = line.strip()
                     if ip and not ip.startswith('#'):
                         unique_ips.add(ip)
-                        file_lines += 1
-                print(f"  从 {file_path} 提取了 {file_lines} 个IP")
-                total_lines += file_lines
+                        file_ips += 1
+                print(f"  从 {os.path.basename(file_path)} 提取了 {file_ips} 个IP")
         except Exception as e:
-            print(f"处理文件 {file_path} 时出错: {e}")
+            print(f"❌ 处理文件 {file_path} 时出错: {e}")
     
-    print(f"总共处理了 {total_lines} 行，去重后得到 {len(unique_ips)} 个唯一IP")
+    print(f"去重后得到 {len(unique_ips)} 个唯一IP")
     
     # 计算北京时间（UTC+8）
     utc_now = datetime.utcnow()
     beijing_time = utc_now + timedelta(hours=8)
     
     # 写入合并后的文件
-    print(f"写入合并文件: {merged_file}")
     try:
         with open(merged_file, 'w', encoding='utf-8') as f:
             f.write(f"# Merged non-US IPs for {target_date}\n")
@@ -104,30 +118,36 @@ def merge_non_us_ips(target_date):
             for ip in sorted(unique_ips):
                 f.write(ip + '\n')
         
-        print(f"成功合并 {len(unique_ips)} 个唯一IP到 {merged_file}")
+        print(f"✅ 成功合并 {len(unique_ips)} 个唯一IP到 {merged_file}")
         return True
     except Exception as e:
-        print(f"写入合并文件时出错: {e}")
+        print(f"❌ 写入合并文件时出错: {e}")
         return False
 
-if __name__ == "__main__":
+def main():
     print("=== 开始执行合并脚本 ===")
-    
-    # 打印调试信息
-    debug_info()
     
     # 获取目标日期参数
     if len(sys.argv) > 1:
         target_date = sys.argv[1]
         print(f"使用参数提供的日期: {target_date}")
     else:
-        # 默认为前天（基于UTC+8的北京时间概念）
+        # 更可靠的方法计算前天
         utc_now = datetime.utcnow()
         beijing_now = utc_now + timedelta(hours=8)
         target_date = (beijing_now - timedelta(days=2)).strftime('%Y-%m-%d')
-        print(f"使用自动计算的日期: {target_date}")
+        print(f"使用自动计算的前天日期: {target_date}")
     
-    print(f"目标日期: {target_date}")
+    # 验证日期格式
+    try:
+        datetime.strptime(target_date, '%Y-%m-%d')
+    except ValueError:
+        print(f"❌ 错误的日期格式: {target_date}，应该为 YYYY-MM-DD")
+        # 使用昨天作为备选
+        utc_now = datetime.utcnow()
+        beijing_now = utc_now + timedelta(hours=8)
+        target_date = (beijing_now - timedelta(days=1)).strftime('%Y-%m-%d')
+        print(f"使用备选日期: {target_date}")
     
     # 执行合并
     success = merge_non_us_ips(target_date)
@@ -138,3 +158,6 @@ if __name__ == "__main__":
     else:
         print("=== 合并失败 ===")
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()
