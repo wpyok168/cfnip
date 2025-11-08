@@ -1,4 +1,4 @@
-name: 合并和去重非美国IP
+name:  🌐 合并和去重非美国IP
 
 on:
   schedule:
