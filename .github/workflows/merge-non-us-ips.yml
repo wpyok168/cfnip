@@ -3,9 +3,8 @@ name: Merge Non-US IPs
 on:
   schedule:
     # 北京时间每天凌晨1点运行 (UTC+8)
-    # 对应UTC时间前一天的17:00
     - cron: '0 17 * * *'
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
     inputs:
       date_override:
         description: '指定日期 (YYYY-MM-DD)，默认为前天'
@@ -21,47 +20,69 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
+      - name: Debug - List directory structure
+        run: |
+          echo "=== 当前目录结构 ==="
+          ls -la
+          echo "=== non_us_ips 目录结构 ==="
+          if [ -d "non_us_ips" ]; then
+            find non_us_ips -type f | head -20
+          else
+            echo "non_us_ips 目录不存在"
+          fi
           
-      - name: Calculate target date (Beijing Time)
+      - name: Setup Python and debug
+        run: |
+          echo "=== Python 环境信息 ==="
+          python --version
+          pip --version
+          echo "=== 脚本文件检查 ==="
+          if [ -f ".github/scripts/merge_non_us_ips.py" ]; then
+            echo "合并脚本存在"
+            python .github/scripts/merge_non_us_ips.py --help || echo "脚本执行测试失败"
+          else
+            echo "合并脚本不存在"
+          fi
+          
+      - name: Calculate target date
         id: date_calc
         run: |
-          # 设置时区为北京时间
           export TZ='Asia/Shanghai'
-          
           if [ -n "${{ github.event.inputs.date_override }}" ]; then
             TARGET_DATE="${{ github.event.inputs.date_override }}"
           else
-            # 获取前天的日期（基于北京时间）
             TARGET_DATE=$(date -d "2 days ago" +%Y-%m-%d)
           fi
           echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
-          echo "Beijing Time: $(date)"
-          echo "Target date: $TARGET_DATE"
+          echo "计算的目标日期: $TARGET_DATE"
+          echo "检查目录是否存在:"
+          if [ -d "non_us_ips/$TARGET_DATE" ]; then
+            echo "目录 non_us_ips/$TARGET_DATE 存在"
+            ls -la "non_us_ips/$TARGET_DATE/" || echo "无法列出目录内容"
+          else
+            echo "目录 non_us_ips/$TARGET_DATE 不存在"
+            echo "可用的日期目录:"
+            find non_us_ips -maxdepth 1 -type d -name "202*" | head -10
+          fi
           
       - name: Merge files from target date
         run: |
-          python .github/scripts/merge_non_us_ips.py "${{ steps.date_calc.outputs.target_date }}"
+          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
+          echo "开始合并日期: $TARGET_DATE"
+          python .github/scripts/merge_non_us_ips.py "$TARGET_DATE"
+          echo "合并脚本退出码: $?"
           
-      - name: Commit and push merged file
+      - name: Check merged result
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
           MERGED_FILE="non_us_ips/merged/merged_ips_${TARGET_DATE}.txt"
-          
+          echo "检查合并结果文件: $MERGED_FILE"
           if [ -f "$MERGED_FILE" ]; then
-            git add "$MERGED_FILE"
-            git commit -m "Merge non-US IPs for $TARGET_DATE [Auto]"
-            git push
+            echo "合并文件创建成功"
+            echo "文件大小: $(wc -l < "$MERGED_FILE") 行"
+            head -5 "$MERGED_FILE"
           else
-            echo "No merged file created, nothing to commit"
+            echo "合并文件未创建"
+            echo "merged 目录内容:"
+            ls -la "non_us_ips/merged/" 2>/dev/null || echo "merged 目录不存在"
           fi
-            
-      - name: Cleanup old files
-        run: |
-          python .github/scripts/cleanup_old_files.py
