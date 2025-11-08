@@ -7,6 +7,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from queue import Queue
+from datetime import datetime
 
 # 目标URL列表
 urls = [
@@ -43,8 +44,19 @@ completed_count = 0
 total_count = 0
 success_count = 0
 
-def clean_old_files():
-    """清理旧文件"""
+# 美国相关关键词（用于过滤非美国IP）
+us_keywords = ['美国', 'United States', 'US', 'USA', '加州', '加利福尼亚', '洛杉矶', 'San Jose', 'Chicago', 'New York', 'NY', 'Seattle']
+
+def create_output_directory():
+    """创建日期时间格式的输出目录"""
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = f"cf_ips_{current_time}"
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"创建输出目录: {output_dir}")
+    return output_dir
+
+def clean_old_files(output_dir):
+    """清理当前目录的旧文件，但保留输出目录"""
     for filename in ['ip.txt', 'ipv6.txt']:
         if os.path.exists(filename):
             os.remove(filename)
@@ -121,6 +133,17 @@ def get_location_from_baidu(ip):
             
     except Exception as e:
         return '未知', False
+
+def is_us_location(location):
+    """判断是否为美国位置"""
+    if location == '未知':
+        return False
+    
+    location_lower = location.lower()
+    for keyword in us_keywords:
+        if keyword.lower() in location_lower:
+            return True
+    return False
 
 def process_single_ip(ip):
     """处理单个IP地址查询"""
@@ -199,11 +222,11 @@ def query_ips_parallel(ip_set, max_workers=10):
     
     return results
 
-def save_results_with_location(ip_results, filename, is_ipv6=False):
+def save_results_with_location(ip_results, filename, is_ipv6=False, output_dir="."):
     """保存结果到文件"""
     if not ip_results:
         print(f'没有要保存的{"IPv6" if is_ipv6 else "IPv4"}地址结果。')
-        return
+        return [], []
     
     # 按IP地址排序结果
     if is_ipv6:
@@ -211,32 +234,54 @@ def save_results_with_location(ip_results, filename, is_ipv6=False):
     else:
         sorted_results = sorted(ip_results, key=lambda x: [int(part) for part in x[0].split('.')])
     
-    results = []
+    all_results = []
+    non_us_results = []
     failed_count = 0
+    non_us_count = 0
     
     for ip, location in sorted_results:
         if location == '未知':
             failed_count += 1
         
+        # 构建结果行
         if is_ipv6:
-            results.append(f"[{ip}]:8443#{location}-IPV6")
+            result_line = f"[{ip}]:8443#{location}-IPV6"
         else:
-            results.append(f"{ip}:8443#{location}")
+            result_line = f"{ip}:8443#{location}"
+        
+        all_results.append(result_line)
+        
+        # 如果是非美国IP，添加到非美国列表
+        if not is_us_location(location):
+            non_us_results.append(result_line)
+            non_us_count += 1
     
-    # 保存结果
-    with open(filename, 'w', encoding='utf-8') as file:
-        for line in results:
+    # 保存所有结果
+    all_filepath = os.path.join(output_dir, filename)
+    with open(all_filepath, 'w', encoding='utf-8') as file:
+        for line in all_results:
             file.write(line + '\n')
     
-    print(f'\n已保存 {len(results)} 个{"IPv6" if is_ipv6 else "IPv4"}地址到 {filename}')
-    print(f'成功获取地理位置: {len(results) - failed_count}, 失败: {failed_count}')
+    # 保存非美国结果
+    non_us_filename = f"non_us_{filename}"
+    non_us_filepath = os.path.join(output_dir, non_us_filename)
+    with open(non_us_filepath, 'w', encoding='utf-8') as file:
+        for line in non_us_results:
+            file.write(line + '\n')
+    
+    print(f'\n已保存 {len(all_results)} 个{"IPv6" if is_ipv6 else "IPv4"}地址到 {all_filepath}')
+    print(f'成功获取地理位置: {len(all_results) - failed_count}, 失败: {failed_count}')
+    print(f'非美国IP: {non_us_count} 个, 已保存到 {non_us_filepath}')
+    
+    return all_results, non_us_results
 
-def verify_results():
+def verify_results(output_dir):
     """验证结果文件中的IP和地理位置对应关系"""
-    for filename in ['ip.txt', 'ipv6.txt']:
-        if os.path.exists(filename):
+    for filename in ['ip.txt', 'ipv6.txt', 'non_us_ip.txt', 'non_us_ipv6.txt']:
+        filepath = os.path.join(output_dir, filename)
+        if os.path.exists(filepath):
             print(f'\n验证 {filename}:')
-            with open(filename, 'r', encoding='utf-8') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
                 print(f'总行数: {len(lines)}')
                 for i, line in enumerate(lines[:5], 1):
@@ -252,14 +297,45 @@ def test_baidu_api():
         print(f"{status} 测试 {ip} -> {location}")
         time.sleep(0.5)  # 短暂延迟避免触发限制
 
+def generate_statistics(ipv4_results, ipv6_results, non_us_ipv4, non_us_ipv6, output_dir):
+    """生成统计信息"""
+    stats_file = os.path.join(output_dir, "statistics.txt")
+    
+    with open(stats_file, 'w', encoding='utf-8') as f:
+        f.write("Cloudflare IP 收集统计报告\n")
+        f.write("=" * 50 + "\n")
+        f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
+        f.write("IPv4 统计:\n")
+        f.write(f"  总IP数量: {len(ipv4_results)}\n")
+        f.write(f"  非美国IP数量: {len(non_us_ipv4)}\n")
+        f.write(f"  美国IP数量: {len(ipv4_results) - len(non_us_ipv4)}\n\n")
+        
+        f.write("IPv6 统计:\n")
+        f.write(f"  总IP数量: {len(ipv6_results)}\n")
+        f.write(f"  非美国IP数量: {len(non_us_ipv6)}\n")
+        f.write(f"  美国IP数量: {len(ipv6_results) - len(non_us_ipv6)}\n\n")
+        
+        total_ips = len(ipv4_results) + len(ipv6_results)
+        total_non_us = len(non_us_ipv4) + len(non_us_ipv6)
+        f.write("总体统计:\n")
+        f.write(f"  总IP数量: {total_ips}\n")
+        f.write(f"  非美国IP数量: {total_non_us}\n")
+        f.write(f"  非美国IP比例: {(total_non_us/total_ips*100):.1f}%\n")
+    
+    print(f"统计报告已保存到: {stats_file}")
+
 def main():
     """主函数"""
     print("开始收集Cloudflare IP地址...")
     
+    # 创建输出目录
+    output_dir = create_output_directory()
+    
     # 先测试API
     test_baidu_api()
     
-    clean_old_files()
+    clean_old_files(output_dir)
     
     # 并行获取IP地址
     print("\n开始从各数据源收集IP地址...")
@@ -268,20 +344,33 @@ def main():
     print(f"\n收集完成: IPv4: {len(unique_ipv4)}个, IPv6: {len(unique_ipv6)}个")
     
     # 并行查询地理位置并保存结果
+    non_us_ipv4 = []
+    non_us_ipv6 = []
+    
     if unique_ipv4:
         print(f"\n开始处理IPv4地址...")
-        ipv4_results = query_ips_parallel(unique_ipv4, max_workers=15)  # 增加IPv4查询线程数
-        save_results_with_location(ipv4_results, 'ip.txt', False)
+        ipv4_results = query_ips_parallel(unique_ipv4, max_workers=15)
+        all_ipv4, non_us_ipv4 = save_results_with_location(ipv4_results, 'ip.txt', False, output_dir)
     
     if unique_ipv6:
         print(f"\n开始处理IPv6地址...")
-        ipv6_results = query_ips_parallel(unique_ipv6, max_workers=10)  # IPv6查询线程数稍少
-        save_results_with_location(ipv6_results, 'ipv6.txt', True)
+        ipv6_results = query_ips_parallel(unique_ipv6, max_workers=10)
+        all_ipv6, non_us_ipv6 = save_results_with_location(ipv6_results, 'ipv6.txt', True, output_dir)
+    
+    # 生成统计报告
+    generate_statistics(
+        all_ipv4 if 'all_ipv4' in locals() else [],
+        all_ipv6 if 'all_ipv6' in locals() else [],
+        non_us_ipv4,
+        non_us_ipv6,
+        output_dir
+    )
     
     # 验证结果
-    verify_results()
+    verify_results(output_dir)
     
-    print("\n任务完成！")
+    print(f"\n任务完成！所有文件已保存到目录: {output_dir}")
+    print(f"非美国IP已单独保存在 non_us_*.txt 文件中")
 
 if __name__ == "__main__":
     main()
