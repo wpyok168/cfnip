@@ -11,6 +11,9 @@ on:
         default: ''
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   merge-files:
     runs-on: ubuntu-latest
@@ -33,61 +36,38 @@ jobs:
           echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
           echo "目标处理日期: $TARGET_DATE"
           
-      - name: Show repository status before merge
+      - name: Show files before processing
         run: |
-          echo "=== 合并前的文件状态 ==="
+          echo "=== 处理前的文件 ==="
           find non_us_ips -name "*.txt" | head -10 || echo "没有找到txt文件"
-          git status --porcelain || echo "git status 失败"
           
       - name: Merge and deduplicate IPs
         run: |
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          echo "开始合并和去重日期: $TARGET_DATE"
           python .github/scripts/merge_non_us_ips.py "$TARGET_DATE"
           
       - name: Cleanup old files
         run: |
           python .github/scripts/cleanup_old_files.py
           
-      - name: Show repository status after merge
+      - name: Show files after processing
         run: |
-          echo "=== 合并后的文件状态 ==="
+          echo "=== 处理后的文件 ==="
           find non_us_ips -name "*.txt" | head -10 || echo "没有找到txt文件"
-          git status --porcelain || echo "git status 失败"
-          echo "=== 新生成的文件 ==="
-          find non_us_ips/merged -name "merged_ips_*.txt" -mmin -5 2>/dev/null | head -5 || echo "没有新生成的合并文件"
           
-      - name: Configure Git and commit changes
+      - name: Commit and push changes
         run: |
-          # 配置Git用户
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
           
-          # 显示详细的git状态
-          echo "=== 详细的Git状态 ==="
-          git status
-          
-          # 添加所有更改
-          echo "=== 添加文件到Git ==="
-          git add .
-          
-          # 显示暂存区的文件
-          echo "=== 暂存区的文件 ==="
-          git diff --cached --name-only
-          
-          # 提交更改
-          echo "=== 提交更改 ==="
-          git commit -m "Auto: Merge and deduplicate non-US IPs for ${{ steps.date_calc.outputs.target_date }} [$(date +%Y-%m-%d)]" || echo "没有更改可提交"
-          
-      - name: Push changes to repository
-        run: |
-          echo "=== 推送到仓库 ==="
-          git push origin HEAD:${GITHUB_REF#refs/heads/} || echo "推送失败"
-          
-      - name: Verify push result
-        run: |
-          echo "=== 推送验证 ==="
-          echo "如果上面显示'推送失败'，请检查:"
-          echo "1. GITHUB_TOKEN 权限"
-          echo "2. 分支保护规则"
-          echo "3. 工作流权限设置"
+          # 检查是否有更改
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "🟡 没有检测到更改，跳过提交"
+          else
+            echo "🟢 检测到更改，准备提交"
+            git add .
+            git status
+            git commit -m "Auto: Merge and deduplicate non-US IPs for ${{ steps.date_calc.outputs.target_date }} [$(date +%Y-%m-%d)]"
+            git push
+            echo "✅ 更改已提交并推送"
+          fi
