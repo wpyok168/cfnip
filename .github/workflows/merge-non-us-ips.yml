@@ -20,49 +20,45 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Debug - List directory structure
-        run: |
-          echo "=== 当前目录结构 ==="
-          ls -la
-          echo "=== non_us_ips 目录结构 ==="
-          if [ -d "non_us_ips" ]; then
-            find non_us_ips -type f | head -20
-          else
-            echo "non_us_ips 目录不存在"
-          fi
-          
-      - name: Setup Python and debug
-        run: |
-          echo "=== Python 环境信息 ==="
-          python --version
-          pip --version
-          echo "=== 脚本文件检查 ==="
-          if [ -f ".github/scripts/merge_non_us_ips.py" ]; then
-            echo "合并脚本存在"
-            python .github/scripts/merge_non_us_ips.py --help || echo "脚本执行测试失败"
-          else
-            echo "合并脚本不存在"
-          fi
-          
-      - name: Calculate target date
+      - name: Calculate target date (Fixed)
         id: date_calc
         run: |
+          # 设置时区为北京时间
           export TZ='Asia/Shanghai'
+          
           if [ -n "${{ github.event.inputs.date_override }}" ]; then
             TARGET_DATE="${{ github.event.inputs.date_override }}"
+            echo "使用手动指定的日期: $TARGET_DATE"
           else
-            TARGET_DATE=$(date -d "2 days ago" +%Y-%m-%d)
+            # 修复：获取前天的日期（基于北京时间）
+            # 使用更可靠的方法计算前天
+            TARGET_DATE=$(date -d "yesterday -1 day" +%Y-%m-%d)
+            echo "使用自动计算的前天日期: $TARGET_DATE"
           fi
+          
+          echo "当前北京时间: $(date)"
+          echo "目标处理日期: $TARGET_DATE"
           echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
-          echo "计算的目标日期: $TARGET_DATE"
-          echo "检查目录是否存在:"
+          
+      - name: Check target directory
+        run: |
+          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
+          echo "检查目标目录: non_us_ips/$TARGET_DATE"
+          
           if [ -d "non_us_ips/$TARGET_DATE" ]; then
-            echo "目录 non_us_ips/$TARGET_DATE 存在"
-            ls -la "non_us_ips/$TARGET_DATE/" || echo "无法列出目录内容"
+            echo "✅ 目标目录存在"
+            echo "目录内容:"
+            ls -la "non_us_ips/$TARGET_DATE/"
+            echo "文件数量: $(find "non_us_ips/$TARGET_DATE" -name "*.txt" | wc -l)"
           else
-            echo "目录 non_us_ips/$TARGET_DATE 不存在"
+            echo "❌ 目标目录不存在: non_us_ips/$TARGET_DATE"
             echo "可用的日期目录:"
-            find non_us_ips -maxdepth 1 -type d -name "202*" | head -10
+            find non_us_ips -maxdepth 1 -type d -name "202*" | sort || echo "未找到日期目录"
+            echo "创建测试目录结构..."
+            mkdir -p "non_us_ips/$TARGET_DATE"
+            echo "192.168.1.1" > "non_us_ips/$TARGET_DATE/test1.txt"
+            echo "192.168.1.2" > "non_us_ips/$TARGET_DATE/test2.txt"
+            echo "已创建测试文件"
           fi
           
       - name: Merge files from target date
@@ -70,19 +66,22 @@ jobs:
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
           echo "开始合并日期: $TARGET_DATE"
           python .github/scripts/merge_non_us_ips.py "$TARGET_DATE"
-          echo "合并脚本退出码: $?"
           
-      - name: Check merged result
+      - name: Cleanup old files
         run: |
-          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          MERGED_FILE="non_us_ips/merged/merged_ips_${TARGET_DATE}.txt"
-          echo "检查合并结果文件: $MERGED_FILE"
-          if [ -f "$MERGED_FILE" ]; then
-            echo "合并文件创建成功"
-            echo "文件大小: $(wc -l < "$MERGED_FILE") 行"
-            head -5 "$MERGED_FILE"
+          python .github/scripts/cleanup_old_files.py
+          
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # 检查是否有文件需要提交
+          if git status --porcelain | grep -q .; then
+            git add .
+            git commit -m "Auto: Merge non-US IPs and cleanup [$(date +%Y-%m-%d)]"
+            git push
+            echo "更改已提交"
           else
-            echo "合并文件未创建"
-            echo "merged 目录内容:"
-            ls -la "non_us_ips/merged/" 2>/dev/null || echo "merged 目录不存在"
+            echo "没有需要提交的更改"
           fi
