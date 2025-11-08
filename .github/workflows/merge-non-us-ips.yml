@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Calculate target date
         id: date_calc
@@ -26,32 +28,46 @@ jobs:
           if [ -n "${{ github.event.inputs.date_override }}" ]; then
             TARGET_DATE="${{ github.event.inputs.date_override }}"
           else
-            TARGET_DATE=$(date -d "yesterday -1 day" +%Y-%m-%d)
+            # 使用前天日期
+            TARGET_DATE=$(date -d "2 days ago" +%Y%m%d)
           fi
           echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
+          echo "目标处理日期: $TARGET_DATE"
+          echo "文件匹配模式: non_us_ips_${TARGET_DATE}_*.txt"
           
-      - name: Check target directory
+      - name: Check existing files
         run: |
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          if [ -d "non_us_ips/$TARGET_DATE" ]; then
-            echo "✅ 目标目录存在"
-          else
-            echo "❌ 目标目录不存在"
-            find non_us_ips -maxdepth 1 -type d -name "202*" | sort
-            exit 1
-          fi
+          echo "=== 检查现有文件 ==="
+          echo "non_us_ips 目录内容:"
+          ls -la non_us_ips/ || echo "non_us_ips 目录不存在"
           
-      - name: Merge files
+          echo "=== 匹配目标日期的文件 ==="
+          find non_us_ips -name "non_us_ips_${TARGET_DATE}_*.txt" | head -10
+          
+          echo "=== 所有 non_us_ips 文件 ==="
+          find non_us_ips -name "non_us_ips_*.txt" | head -10
+          
+      - name: Merge files from target date
         run: |
-          python .github/scripts/merge_non_us_ips.py "${{ steps.date_calc.outputs.target_date }}"
+          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
+          echo "开始合并日期: $TARGET_DATE"
+          python .github/scripts/merge_non_us_ips.py "$TARGET_DATE"
           
       - name: Cleanup old files
         run: |
           python .github/scripts/cleanup_old_files.py
           
-      - name: Show generated files
+      - name: Commit and push changes
         run: |
-          echo "=== 生成的文件 ==="
-          find non_us_ips/merged -name "*.txt" -mmin -5 | head -10 || echo "没有新生成的文件"
-          echo "=== 清理的文件 ==="
-          echo "清理操作已完成"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "没有需要提交的更改"
+          else
+            git add .
+            git commit -m "Auto: Merge non-US IPs for ${{ steps.date_calc.outputs.target_date }}"
+            git push
+            echo "更改已提交"
+          fi
