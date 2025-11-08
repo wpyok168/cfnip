@@ -29,7 +29,7 @@ jobs:
         pip install requests
         
     - name: Run IP collection script
-      run: python collect_ips.py
+      run: python autoip6.py
       
     - name: Commit and push if changed
       run: |
