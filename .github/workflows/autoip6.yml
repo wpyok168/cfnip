@@ -60,7 +60,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # 移除了缓存配置
 
       - name: 📦 安装依赖
         run: |
@@ -111,20 +110,37 @@ jobs:
             echo "❌ ipv6.txt 文件缺失或为空"
             exit 1
           fi
+          
+          # 检查非美国区域IP文件
+          echo "🔍 检查非美国区域IP文件..."
+          non_us_files=$(find non_us_ips -name "non_us_ips_*.txt" -type f 2>/dev/null | wc -l)
+          if [ "$non_us_files" -gt 0 ]; then
+            latest_non_us=$(find non_us_ips -name "non_us_ips_*.txt" -type f | sort -r | head -1)
+            non_us_count=$(wc -l < "$latest_non_us" | tr -d ' ')
+            echo "✅ 非美国区域IP文件: $non_us_files 个文件，最新文件包含 $non_us_count 行"
+            echo "non_us_files=$non_us_files" >> $GITHUB_OUTPUT
+            echo "non_us_count=$non_us_count" >> $GITHUB_OUTPUT
+            echo "latest_non_us=$latest_non_us" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ 未找到非美国区域IP文件"
+            echo "non_us_files=0" >> $GITHUB_OUTPUT
+            echo "non_us_count=0" >> $GITHUB_OUTPUT
+          fi
 
       # ========== 变更检查 ==========
       - name: 📊 检查文件变更
         id: changes-check
         run: |
           echo "📊 检查文件变更..."
-          if git diff --quiet HEAD -- ip.txt ipv6.txt; then
-            echo "📭 未检测到IP文件变更"
+          # 检查主要IP文件和非美国区域IP文件
+          if git diff --quiet HEAD -- ip.txt ipv6.txt non_us_ips/; then
+            echo "📭 未检测到文件变更"
             echo "has_changes=false" >> $GITHUB_OUTPUT
           else
-            echo "📬 检测到IP文件变更"
+            echo "📬 检测到文件变更"
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "📝 变更文件:"
-            git diff --name-only HEAD -- ip.txt ipv6.txt
+            git diff --name-only HEAD -- ip.txt ipv6.txt non_us_ips/
           fi
 
       # ========== 提交变更 ==========
@@ -138,12 +154,13 @@ jobs:
             
             • 更新 ip.txt: ${{ steps.file-check.outputs.ip_count }} 个IPv4地址
             • 更新 ipv6.txt: ${{ steps.file-check.outputs.ipv6_count }} 个IPv6地址
+            • 新增非美国区域IP文件
             • 时间戳: ${{ steps.timestamp.outputs.time }}
             • 触发方式: ${{ github.event_name }}
           commit_user_name: '🤖 GitHub Actions 机器人'
           commit_user_email: 'actions@users.noreply.github.com'
           commit_options: '--signoff'
-          file_pattern: 'ip.txt ipv6.txt'
+          file_pattern: 'ip.txt ipv6.txt non_us_ips/*'
           skip_fetch: true
           skip_checkout: true
 
@@ -162,11 +179,20 @@ jobs:
           echo "### 📁 文件状态" >> $GITHUB_STEP_SUMMARY
           echo "- **IPv4地址数量:** ${{ steps.file-check.outputs.ip_count }}" >> $GITHUB_STEP_SUMMARY
           echo "- **IPv6地址数量:** ${{ steps.file-check.outputs.ipv6_count }}" >> $GITHUB_STEP_SUMMARY
+          
+          # 添加非美国区域IP信息
+          if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
+            echo "- **非美国区域IP文件:** ${{ steps.file-check.outputs.non_us_files }} 个文件" >> $GITHUB_STEP_SUMMARY
+            echo "- **最新非美国IP文件:** ${{ steps.file-check.outputs.latest_non_us }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if steps.changes-check.outputs.has_changes == 'true'; then
             echo "### ✅ 变更已提交" >> $GITHUB_STEP_SUMMARY
             echo "IP地址文件已更新并自动提交。" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
+              echo "📁 非美国区域IP文件已保存到仓库" >> $GITHUB_STEP_SUMMARY
+            fi
           else
             echo "### 📭 无变更" >> $GITHUB_STEP_SUMMARY
             echo "IP地址文件已是最新版本。" >> $GITHUB_STEP_SUMMARY
@@ -183,6 +209,9 @@ jobs:
           echo "🎉 成功更新IP地址！"
           echo "📊 IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址"
           echo "📊 IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址"
+          if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
+            echo "🌍 非美国区域IP: ${{ steps.file-check.outputs.non_us_files }} 个文件已保存"
+          fi
 
       - name: ℹ️ 无变更通知
         if: success() && steps.changes-check.outputs.has_changes == 'false'
@@ -190,3 +219,6 @@ jobs:
           echo "ℹ️ IP地址已是最新版本。"
           echo "📊 当前IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址"
           echo "📊 当前IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址"
+          if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
+            echo "📁 非美国区域IP文件: ${{ steps.file-check.outputs.non_us_files }} 个"
+          fi
