@@ -1,0 +1,67 @@
+name: Merge Non-US IPs
+
+on:
+  schedule:
+    # 北京时间每天凌晨1点运行 (UTC+8)
+    # 对应UTC时间前一天的17:00
+    - cron: '0 17 * * *'
+  workflow_dispatch: # 允许手动触发
+    inputs:
+      date_override:
+        description: '指定日期 (YYYY-MM-DD)，默认为前天'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  merge-files:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+          
+      - name: Calculate target date (Beijing Time)
+        id: date_calc
+        run: |
+          # 设置时区为北京时间
+          export TZ='Asia/Shanghai'
+          
+          if [ -n "${{ github.event.inputs.date_override }}" ]; then
+            TARGET_DATE="${{ github.event.inputs.date_override }}"
+          else
+            # 获取前天的日期（基于北京时间）
+            TARGET_DATE=$(date -d "2 days ago" +%Y-%m-%d)
+          fi
+          echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
+          echo "Beijing Time: $(date)"
+          echo "Target date: $TARGET_DATE"
+          
+      - name: Merge files from target date
+        run: |
+          python .github/scripts/merge_non_us_ips.py "${{ steps.date_calc.outputs.target_date }}"
+          
+      - name: Commit and push merged file
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
+          MERGED_FILE="non_us_ips/merged/merged_ips_${TARGET_DATE}.txt"
+          
+          if [ -f "$MERGED_FILE" ]; then
+            git add "$MERGED_FILE"
+            git commit -m "Merge non-US IPs for $TARGET_DATE [Auto]"
+            git push
+          else
+            echo "No merged file created, nothing to commit"
+          fi
+            
+      - name: Cleanup old files
+        run: |
+          python .github/scripts/cleanup_old_files.py
