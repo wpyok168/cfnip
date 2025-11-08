@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import glob
 
 def merge_non_us_ips(target_date):
@@ -46,14 +46,14 @@ def merge_non_us_ips(target_date):
             print(f"Error processing {file_path}: {e}")
     
     # 使用北京时间
-    from datetime import timezone
-    beijing_time = datetime.now(timezone(timedelta(hours=8)))
+    beijing_tz = timezone(timedelta(hours=8))
+    beijing_time = datetime.now(beijing_tz)
     
     # 写入合并后的文件
     with open(merged_file, 'w', encoding='utf-8') as f:
         f.write(f"# Merged non-US IPs for {target_date}\n")
         f.write(f"# Total unique IPs: {len(unique_ips)}\n")
-        f.write(f"# Generated on (Beijing Time): {beijing_time.strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n")
+        f.write(f"# Generated on (Beijing Time): {beijing_time.strftime('%Y-%m-%d %H:%M:%S')} CST\n\n")
         
         for ip in sorted(unique_ips):
             f.write(ip + '\n')
@@ -66,12 +66,13 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         target_date = sys.argv[1]
     else:
-        # 默认为前天（基于当前时间）
-        from datetime import timezone
-        beijing_now = datetime.now(timezone(timedelta(hours=8)))
+        # 默认为前天（基于北京时间）
+        beijing_tz = timezone(timedelta(hours=8))
+        beijing_now = datetime.now(beijing_tz)
         target_date = (beijing_now - timedelta(days=2)).strftime('%Y-%m-%d')
     
-    print(f"Beijing Time: {datetime.now(timezone(timedelta(hours=8)))}")
+    beijing_tz = timezone(timedelta(hours=8))
+    print(f"Beijing Time: {datetime.now(beijing_tz)}")
     print(f"Starting merge for date: {target_date}")
     success = merge_non_us_ips(target_date)
     sys.exit(0 if success else 1)
