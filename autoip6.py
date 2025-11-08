@@ -15,14 +15,13 @@ import ipaddress
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
 
 class CFIPCollector:
     def __init__(self, urls_config='urls.json', main_config='config.json'):
         """初始化配置"""
-        # 设置北京时区
-        self.beijing_tz = pytz.timezone('Asia/Shanghai')
+        # 设置北京时区 (UTC+8)
+        self.beijing_tz = timezone(timedelta(hours=8))
         self.load_urls_config(urls_config)
         self.load_main_config(main_config)
         self.setup_global_variables()
@@ -470,7 +469,7 @@ class CFIPCollector:
         print(f'  • IPv6查询线程: {self.config["request_settings"]["max_workers_ipv6"]}')
         print(f'  • 地理位置查询: {"启用" if self.config["location_settings"]["enable_location_query"] else "禁用"}')
         print(f'  • 保存非美国IP: {"是" if self.config["output_settings"]["save_non_us_separately"] else "否"}')
-        print(f'  • 使用时区: 北京时间(Asia/Shanghai)')
+        print(f'  • 使用时区: 北京时间(UTC+8)')
 
     def main(self):
         """主函数"""
