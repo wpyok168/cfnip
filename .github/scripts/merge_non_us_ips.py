@@ -138,11 +138,11 @@ def merge_and_deduplicate_ips(target_date):
     try:
         with open(merged_file, 'w', encoding='utf-8') as f:
             # 写入文件头
-            f.write(f"# Merged and Deduplicated non-US IPs for {output_date}\n")
-            f.write(f"# Source date: {target_date_clean}\n")
-            f.write(f"# Total unique IPs: {len(unique_ips)}\n")
-            f.write(f"# Source files: {len(files)}\n")
-            f.write(f"# Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(f"# 合并去重的非美国IP地址 - 日期: {output_date}\n")
+            f.write(f"# 源日期: {target_date_clean}\n")
+            f.write(f"# 唯一IP数量: {len(unique_ips)}\n")
+            f.write(f"# 源文件数量: {len(files)}\n")
+            f.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
             # 按数字顺序写入IP
             sorted_ips = sorted(unique_ips, key=lambda ip: [int(part) for part in ip.split('.')])
@@ -152,12 +152,10 @@ def merge_and_deduplicate_ips(target_date):
         # 验证文件是否成功创建
         if os.path.exists(merged_file):
             file_size = os.path.getsize(merged_file)
-            line_count = len(unique_ips) + 7  # IP数量 + 头信息行数
             
             print(f"✅ 成功生成合并文件: {merged_file}")
             print(f"📏 文件大小: {file_size} 字节")
             print(f"🔢 包含 {len(unique_ips)} 个唯一IP")
-            print(f"📄 总行数: {line_count}")
             
             # 显示文件预览
             print("文件预览 (前5行):")
