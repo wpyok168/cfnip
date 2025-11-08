@@ -7,7 +7,6 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-from queue import Queue
 from datetime import datetime
 from functools import wraps
 
@@ -49,20 +48,6 @@ headers = {
     'Accept-Language': 'en-US,en;q=0.5',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
-}
-
-# Cloudflare IP范围
-CF_IP_RANGES = {
-    'ipv4': [
-        '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22',
-        '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20',
-        '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13',
-        '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22'
-    ],
-    'ipv6': [
-        '2606:4700::/32', '2803:f800::/32', '2405:b500::/32', '2405:8100::/32',
-        '2a06:98c0::/29', '2c0f:f248::/32'
-    ]
 }
 
 # 全局变量
@@ -108,21 +93,6 @@ def fetch_url_with_retry(url, max_retries=3):
             logging.info(f'请求 {url} 失败，第 {attempt + 1} 次重试...')
             time.sleep(2)  # 重试前等待
 
-def validate_cloudflare_ip(ip, is_ipv6=False):
-    """验证是否为Cloudflare IP范围"""
-    try:
-        if is_ipv6:
-            ip_obj = ipaddress.IPv6Address(ip)
-            cf_ranges = [ipaddress.IPv6Network(net) for net in CF_IP_RANGES['ipv6']]
-        else:
-            ip_obj = ipaddress.IPv4Address(ip)
-            cf_ranges = [ipaddress.IPv4Network(net) for net in CF_IP_RANGES['ipv4']]
-        
-        return any(ip_obj in network for network in cf_ranges)
-    except Exception as e:
-        logging.debug(f'IP验证失败 {ip}: {e}')
-        return False
-
 def extract_ips_from_text(text):
     """从文本中提取IP地址"""
     ipv4_matches = re.findall(ipv4_pattern, text)
@@ -131,7 +101,7 @@ def extract_ips_from_text(text):
     valid_ipv4 = set()
     valid_ipv6 = set()
     
-    # 验证IPv4地址
+    # 验证IPv4地址格式
     for ip in ipv4_matches:
         try:
             if isinstance(ip, tuple):
@@ -139,18 +109,17 @@ def extract_ips_from_text(text):
             else:
                 ip_str = ip
             
-            if validate_cloudflare_ip(ip_str, False):
-                ipaddress.IPv4Address(ip_str)
-                valid_ipv4.add(ip_str)
+            # 仅验证IP格式，不验证是否为Cloudflare IP
+            ipaddress.IPv4Address(ip_str)
+            valid_ipv4.add(ip_str)
         except (ValueError, ipaddress.AddressValueError):
             continue
     
-    # 验证IPv6地址
+    # 验证IPv6地址格式
     for ip in ipv6_matches:
         try:
             ip_obj = ipaddress.IPv6Address(ip)
-            if validate_cloudflare_ip(ip, True):
-                valid_ipv6.add(ip_obj.compressed.lower())
+            valid_ipv6.add(ip_obj.compressed.lower())
         except (ValueError, ipaddress.AddressValueError):
             continue
     
@@ -420,7 +389,7 @@ def generate_summary(ipv4_count, ipv6_count, non_us_ipv4_count, non_us_ipv6_coun
 def main():
     """主函数"""
     setup_logging()
-    logging.info("🚀 开始收集Cloudflare IP地址...")
+    logging.info("🚀 开始收集IP地址...")
     
     # API测试
     if not test_baidu_api():
