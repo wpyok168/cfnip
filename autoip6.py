@@ -1,154 +1,361 @@
-name: 🌐 收集IP地址
+import requests
+import re
+import os
+import time
+import ipaddress
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from queue import Queue
+from datetime import datetime
 
-on:
-  schedule:
-    - cron: '30 * * * *'
-  workflow_dispatch:
-    inputs:
-      reason:
-        description: '手动触发原因'
-        required: false
-        default: '手动执行'
+# 目标URL列表
+urls = [
+    'https://ip.164746.xyz', 
+    'https://api.uouin.com/cloudflare.html',
+    'https://ipdb.api.030101.xyz/?type=bestcf&country=true',
+    'https://addressesapi.090227.xyz/CloudFlareYes',
+    'https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt',
+    'https://www.wetest.vip/page/cloudflare/address_v6.html',
+    'https://www.wetest.vip/page/cloudflare/address_v4.html',
+    'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/030101-bestcf.txt',
+    'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/wetest-cloudflare-v4.txt',
+    'https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html',
+    'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/result.txt',
+    'https://raw.githubusercontent.com/camel52zhang/yxip/refs/heads/main/ip.txt',
+    'https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist.txt',
+    'https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt'
+]
 
-env:
-  PYTHON_VERSION: '3.10'
-  RETAIN_DAYS: 0
-  KEEP_MINIMUM_RUNS: 5
+# 改进的IP地址正则表达式
+ipv4_pattern = r'\b(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+ipv6_pattern = r'(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,7}:|(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}'
 
-permissions:
-  contents: write
+# 请求头
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Accept': 'application/json',
+    'Referer': 'https://www.baidu.com/'
+}
 
-jobs:
-  collect-ip-addresses:
-    name: 🚀 收集IP地址
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+# 全局变量用于进度显示
+progress_lock = threading.Lock()
+completed_count = 0
+total_count = 0
+success_count = 0
+
+# 非美国区域文件夹
+NON_US_FOLDER = "non_us_ips"
+
+def ensure_folders():
+    """确保必要的文件夹存在"""
+    if not os.path.exists(NON_US_FOLDER):
+        os.makedirs(NON_US_FOLDER)
+
+def clean_old_files():
+    """清理旧文件，但保留非美国区域文件夹"""
+    for filename in ['ip.txt', 'ipv6.txt']:
+        if os.path.exists(filename):
+            os.remove(filename)
+            print(f'已删除旧文件: {filename}')
+
+def fetch_url(url):
+    """获取URL内容"""
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        print(f'请求 {url} 失败: {e}')
+        return None
+
+def extract_ips_from_text(text):
+    """从文本中提取IP地址"""
+    ipv4_matches = re.findall(ipv4_pattern, text)
+    ipv6_matches = re.findall(ipv6_pattern, text)
     
-    steps:
-      - name: 📥 检出仓库
-        uses: actions/checkout@v4
+    valid_ipv4 = set()
+    valid_ipv6 = set()
+    
+    # 验证IPv4地址
+    for ip in ipv4_matches:
+        try:
+            if isinstance(ip, tuple):  # 如果匹配到分组
+                ip_str = '.'.join(ip)
+            else:
+                ip_str = ip
+            ipaddress.IPv4Address(ip_str)
+            valid_ipv4.add(ip_str)
+        except (ValueError, ipaddress.AddressValueError):
+            continue
+    
+    # 验证IPv6地址
+    for ip in ipv6_matches:
+        try:
+            ip_obj = ipaddress.IPv6Address(ip)
+            valid_ipv6.add(ip_obj.compressed.lower())
+        except (ValueError, ipaddress.AddressValueError):
+            continue
+    
+    return valid_ipv4, valid_ipv6
 
-      - name: 🐍 设置Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: 📦 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
-
-      - name: 🌍 收集IP地址
-        id: ip-collection
-        run: |
-          echo "🕸️ 开始收集IP地址..."
-          start_time=$(date +%s)
-          
-          # 运行Python脚本并捕获退出码
-          if python cf_ip_collector.py; then
-            end_time=$(date +%s)
-            duration=$((end_time - start_time))
-            echo "✅ IP地址收集完成"
-            echo "⏱️ 执行时间: ${duration} 秒"
-            echo "result=success" >> $GITHUB_OUTPUT
-          else
-            echo "❌ IP地址收集失败"
-            echo "result=failure" >> $GITHUB_OUTPUT
-            # 不立即退出，继续检查文件状态
-          fi
-
-      - name: 🔍 检查文件状态
-        id: file-check
-        run: |
-          echo "📋 检查文件状态..."
-          
-          # 检查文件是否存在且非空
-          files_exist=true
-          files_non_empty=true
-          
-          if [ -f "ip.txt" ]; then
-            ip_count=$(wc -l < ip.txt | tr -d ' ')
-            echo "📄 ip.txt: $ip_count 行"
-            if [ $ip_count -eq 0 ]; then
-              files_non_empty=false
-              echo "⚠️ ip.txt 文件为空"
-            fi
-          else
-            files_exist=false
-            echo "❌ ip.txt 文件不存在"
-          fi
-          
-          if [ -f "ipv6.txt" ]; then
-            ipv6_count=$(wc -l < ipv6.txt | tr -d ' ')
-            echo "📄 ipv6.txt: $ipv6_count 行"
-            if [ $ipv6_count -eq 0 ]; then
-              files_non_empty=false
-              echo "⚠️ ipv6.txt 文件为空"
-            fi
-          else
-            files_exist=false
-            echo "❌ ipv6.txt 文件不存在"
-          fi
-          
-          echo "files_exist=$files_exist" >> $GITHUB_OUTPUT
-          echo "files_non_empty=$files_non_empty" >> $GITHUB_OUTPUT
-          echo "ip_count=$ip_count" >> $GITHUB_OUTPUT
-          echo "ipv6_count=$ipv6_count" >> $GITHUB_OUTPUT
-
-      - name: 📊 检查变更
-        id: changes-check
-        run: |
-          echo "📊 检查文件变更..."
-          if git diff --quiet HEAD -- ip.txt ipv6.txt 2>/dev/null; then
-            echo "📭 未检测到变更"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "📬 检测到变更"
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: 💾 提交变更
-        id: auto-commit
-        if: steps.changes-check.outputs.has_changes == 'true' && steps.file-check.outputs.files_exist == 'true' && steps.file-check.outputs.files_non_empty == 'true'
-        uses: stefanzweifel/git-auto-commit-action@v4
-        with:
-          commit_message: |
-            chore: 自动更新IP地址
+def get_location_from_baidu(ip):
+    """从百度API获取IP的地理位置信息"""
+    try:
+        url = f'https://opendata.baidu.com/api.php?co=&resource_id=6006&oe=utf8&query={ip}&lang=en'
+        resp = requests.get(url, headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                
+                # 检查百度API返回的status字段
+                status = data.get('status')
+                if status == '0':  # 百度API成功状态为'0'
+                    if data.get('data') and len(data['data']) > 0:
+                        location = data['data'][0].get('location', '未知')
+                        if location and location != '未知':
+                            return location, True
+                        else:
+                            return '未知', False
+                    else:
+                        return '未知', False
+                else:
+                    return '未知', False
+                    
+            except json.JSONDecodeError:
+                return '未知', False
+        else:
+            return '未知', False
             
-            • IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址
-            • IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址
-            • 时间: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
-          file_pattern: |
-            ip.txt
-            ipv6.txt
-            cf_ip_results/
+    except Exception as e:
+        return '未知', False
 
-      - name: 📈 生成总结
-        if: always()
-        run: |
-          echo "## IP地址收集结果" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 文件状态" >> $GITHUB_STEP_SUMMARY
-          echo "- IPv4地址: ${{ steps.file-check.outputs.ip_count }} 个" >> $GITHUB_STEP_SUMMARY
-          echo "- IPv6地址: ${{ steps.file-check.outputs.ipv6_count }} 个" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if steps.file-check.outputs.files_exist == 'true' && steps.file-check.outputs.files_non_empty == 'true'; then
-            if steps.changes-check.outputs.has_changes == 'true'; then
-              echo "✅ **文件已更新并提交**" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "ℹ️ **文件无变更**" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "❌ **文件生成失败**" >> $GITHUB_STEP_SUMMARY
-          fi
+def process_single_ip(ip):
+    """处理单个IP地址查询"""
+    global completed_count, success_count
+    
+    location, success = get_location_from_baidu(ip)
+    
+    with progress_lock:
+        completed_count += 1
+        if success:
+            success_count += 1
+        
+        # 每处理10个IP或完成时显示进度
+        if completed_count % 10 == 0 or completed_count == total_count:
+            success_rate = (success_count / completed_count * 100) if completed_count > 0 else 0
+            print(f'进度: {completed_count}/{total_count} (成功率: {success_rate:.1f}%)')
+    
+    return ip, location, success
 
-      - name: ❌ 失败处理
-        if: steps.file-check.outputs.files_exist != 'true' || steps.file-check.outputs.files_non_empty != 'true'
-        run: |
-          echo "❌ IP地址收集失败"
-          echo "请检查以下可能的问题："
-          echo "1. 网络连接问题"
-          echo "2. 数据源URL失效"
-          echo "3. API限制"
-          exit 1
+def process_urls_parallel(urls, max_workers=5):
+    """并行处理URL获取"""
+    all_ipv4 = set()
+    all_ipv6 = set()
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_url = {executor.submit(fetch_url, url): url for url in urls}
+        
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                text = future.result()
+                if text:
+                    ipv4, ipv6 = extract_ips_from_text(text)
+                    all_ipv4.update(ipv4)
+                    all_ipv6.update(ipv6)
+                    print(f'成功处理: {url} (IPv4: {len(ipv4)}, IPv6: {len(ipv6)})')
+            except Exception as e:
+                print(f'处理 {url} 时出错: {e}')
+    
+    return all_ipv4, all_ipv6
+
+def query_ips_parallel(ip_set, max_workers=10):
+    """并行查询IP地址的地理位置"""
+    global completed_count, total_count, success_count
+    
+    # 重置计数器
+    completed_count = 0
+    total_count = len(ip_set)
+    success_count = 0
+    
+    if not ip_set:
+        return []
+    
+    print(f'开始并行查询 {total_count} 个IP地址的地理位置...')
+    print(f'使用 {max_workers} 个线程同时查询')
+    
+    results = []
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交所有任务
+        future_to_ip = {executor.submit(process_single_ip, ip): ip for ip in ip_set}
+        
+        # 收集结果
+        for future in as_completed(future_to_ip):
+            try:
+                ip, location, success = future.result()
+                results.append((ip, location))
+            except Exception as e:
+                ip = future_to_ip[future]
+                print(f"处理IP {ip} 时发生异常: {e}")
+                results.append((ip, '未知'))
+    
+    # 最终进度显示
+    success_rate = (success_count / total_count * 100) if total_count > 0 else 0
+    print(f'查询完成: 总计 {total_count}, 成功 {success_count}, 成功率: {success_rate:.1f}%')
+    
+    return results
+
+def is_us_location(location):
+    """判断是否为美国区域"""
+    us_keywords = ['美国', 'United States', 'US', 'USA', 'California', 'New York', 'Texas']
+    location_lower = location.lower()
+    for keyword in us_keywords:
+        if keyword.lower() in location_lower:
+            return True
+    return False
+
+def save_results_with_location(ip_results, filename, is_ipv6=False):
+    """保存结果到文件"""
+    if not ip_results:
+        print(f'没有要保存的{"IPv6" if is_ipv6 else "IPv4"}地址结果。')
+        return [], []
+    
+    # 按IP地址排序结果
+    if is_ipv6:
+        sorted_results = sorted(ip_results, key=lambda x: x[0])
+    else:
+        sorted_results = sorted(ip_results, key=lambda x: [int(part) for part in x[0].split('.')])
+    
+    all_results = []
+    us_results = []
+    non_us_results = []
+    failed_count = 0
+    
+    for ip, location in sorted_results:
+        if location == '未知':
+            failed_count += 1
+        
+        if is_ipv6:
+            result_line = f"[{ip}]:8443#{location}-IPV6"
+        else:
+            result_line = f"{ip}:8443#{location}"
+        
+        all_results.append(result_line)
+        
+        # 分离美国和非美国IP
+        if is_us_location(location):
+            us_results.append(result_line)
+        else:
+            non_us_results.append(result_line)
+    
+    # 保存所有结果
+    with open(filename, 'w', encoding='utf-8') as file:
+        for line in all_results:
+            file.write(line + '\n')
+    
+    print(f'\n已保存 {len(all_results)} 个{"IPv6" if is_ipv6 else "IPv4"}地址到 {filename}')
+    print(f'成功获取地理位置: {len(all_results) - failed_count}, 失败: {failed_count}')
+    print(f'美国区域: {len(us_results)}, 非美国区域: {len(non_us_results)}')
+    
+    return us_results, non_us_results
+
+def save_non_us_ips(non_us_ipv4, non_us_ipv6):
+    """保存非美国区域IP到日期时间命名的文件"""
+    if not non_us_ipv4 and not non_us_ipv6:
+        print('没有非美国区域IP需要保存')
+        return
+    
+    # 生成日期时间文件名
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{NON_US_FOLDER}/non_us_ips_{current_time}.txt"
+    
+    with open(filename, 'w', encoding='utf-8') as file:
+        file.write(f"# 非美国区域Cloudflare IP收集\n")
+        file.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        file.write(f"# IPv4数量: {len(non_us_ipv4)}, IPv6数量: {len(non_us_ipv6)}\n\n")
+        
+        if non_us_ipv4:
+            file.write("# IPv4地址:\n")
+            for line in non_us_ipv4:
+                file.write(line + '\n')
+            file.write("\n")
+        
+        if non_us_ipv6:
+            file.write("# IPv6地址:\n")
+            for line in non_us_ipv6:
+                file.write(line + '\n')
+    
+    print(f'已保存非美国区域IP到: {filename}')
+    return filename
+
+def verify_results():
+    """验证结果文件中的IP和地理位置对应关系"""
+    for filename in ['ip.txt', 'ipv6.txt']:
+        if os.path.exists(filename):
+            print(f'\n验证 {filename}:')
+            with open(filename, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                print(f'总行数: {len(lines)}')
+                for i, line in enumerate(lines[:5], 1):
+                    print(f'  样例 {i}: {line.strip()}')
+
+def test_baidu_api():
+    """测试百度API接口是否正常工作"""
+    test_ips = ['8.8.8.8', '1.1.1.1', '162.159.58.65']
+    print("测试百度API接口...")
+    for ip in test_ips:
+        location, success = get_location_from_baidu(ip)
+        status = "✓" if success else "✗"
+        print(f"{status} 测试 {ip} -> {location}")
+        time.sleep(0.5)  # 短暂延迟避免触发限制
+
+def main():
+    """主函数"""
+    print("开始收集Cloudflare IP地址...")
+    
+    # 确保文件夹存在
+    ensure_folders()
+    
+    # 先测试API
+    test_baidu_api()
+    
+    clean_old_files()
+    
+    # 并行获取IP地址
+    print("\n开始从各数据源收集IP地址...")
+    unique_ipv4, unique_ipv6 = process_urls_parallel(urls)
+    
+    print(f"\n收集完成: IPv4: {len(unique_ipv4)}个, IPv6: {len(unique_ipv6)}个")
+    
+    # 并行查询地理位置并保存结果
+    non_us_ipv4 = []
+    non_us_ipv6 = []
+    
+    if unique_ipv4:
+        print(f"\n开始处理IPv4地址...")
+        ipv4_results = query_ips_parallel(unique_ipv4, max_workers=15)
+        us_ipv4, non_us_ipv4 = save_results_with_location(ipv4_results, 'ip.txt', False)
+    
+    if unique_ipv6:
+        print(f"\n开始处理IPv6地址...")
+        ipv6_results = query_ips_parallel(unique_ipv6, max_workers=10)
+        us_ipv6, non_us_ipv6 = save_results_with_location(ipv6_results, 'ipv6.txt', True)
+    
+    # 保存非美国区域IP
+    if non_us_ipv4 or non_us_ipv6:
+        non_us_filename = save_non_us_ips(non_us_ipv4, non_us_ipv6)
+        print(f"\n非美国区域IP统计:")
+        print(f"IPv4: {len(non_us_ipv4)}个")
+        print(f"IPv6: {len(non_us_ipv6)}个")
+        print(f"已保存到: {non_us_filename}")
+    
+    # 验证结果
+    verify_results()
+    
+    print("\n任务完成！")
+
+if __name__ == "__main__":
+    main()
