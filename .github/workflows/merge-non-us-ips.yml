@@ -1,64 +1,131 @@
-name: 🌐 合并和去重非美国IP
+name: 🚀 合并和去重非美国IP
 
 on:
   schedule:
+    # 每天 UTC 时间 17:00 (北京时间 01:00) 执行
     - cron: '0 17 * * *'
+  
   workflow_dispatch:
+    name: 手动触发合并
     inputs:
       date_override:
-        description: '指定日期 (YYYY-MM-DD)，默认为昨天'
+        description: '📅 指定处理日期 (YYYY-MM-DD)'
         required: false
         default: ''
         type: string
+
+env:
+  TIMEZONE: 'Asia/Shanghai'
 
 permissions:
   contents: write
 
 jobs:
-  merge-files:
+  merge-and-deduplicate:
+    name: 🔄 合并和去重IP文件
     runs-on: ubuntu-latest
+    environment: production
     
     steps:
-      - name: 检出代码库
+      # 步骤 1: 检出代码
+      - name: 📥 检出代码库
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
           
-      - name: 显示代码库结构
+      # 步骤 2: 显示目录结构
+      - name: 📁 显示代码库结构
         run: |
-          echo "=== 代码库结构 ==="
-          find . -name "non_us_ips_*.txt" | head -10
-          echo "=== non_us_ips 目录内容 ==="
-          ls -la non_us_ips/ || echo "non_us_ips 目录不存在"
+          echo "=== 📂 代码库结构 ==="
+          find . -name "non_us_ips_*.txt" | head -10 | while read file; do
+            echo "  📄 $file"
+          done
           
-      - name: 计算目标日期
+          echo ""
+          echo "=== 📁 non_us_ips 目录内容 ==="
+          if [ -d "non_us_ips" ]; then
+            ls -la non_us_ips/ | head -10
+          else
+            echo "  ❌ non_us_ips 目录不存在"
+          fi
+          
+      # 步骤 3: 计算目标日期
+      - name: 🗓️ 计算目标日期
         id: date_calc
         run: |
-          export TZ='Asia/Shanghai'
+          export TZ='${{ env.TIMEZONE }}'
+          
+          echo "=== 📅 日期计算 ==="
           if [ -n "${{ github.event.inputs.date_override }}" ]; then
             TARGET_DATE="${{ github.event.inputs.date_override }}"
+            echo "🎯 使用手动指定日期: $TARGET_DATE"
           else
             TARGET_DATE=$(date -d "1 days ago" +%Y%m%d)
+            echo "🔄 使用自动计算的昨天日期: $TARGET_DATE"
           fi
-          echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
-          echo "目标处理日期: $TARGET_DATE"
           
-      - name: 合并和去重IP地址
+          # 验证日期格式
+          if [[ $TARGET_DATE =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            TARGET_DATE_CLEAN=$(echo $TARGET_DATE | tr -d '-')
+            echo "🧹 清理后日期格式: $TARGET_DATE_CLEAN"
+          else
+            TARGET_DATE_CLEAN=$TARGET_DATE
+          fi
+          
+          echo "target_date=$TARGET_DATE_CLEAN" >> $GITHUB_OUTPUT
+          echo "🎯 最终处理日期: $TARGET_DATE_CLEAN"
+          
+      # 步骤 4: 执行合并脚本
+      - name: 🔧 执行合并和去重
         run: |
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          echo "执行合并脚本，日期: $TARGET_DATE"
+          
+          echo "=== 🚀 开始执行合并脚本 ==="
+          echo "📅 处理日期: $TARGET_DATE"
+          echo "🐍 执行脚本: .github/scripts/merge_non_us_ips.py"
+          
+          # 检查脚本是否存在
+          if [ ! -f ".github/scripts/merge_non_us_ips.py" ]; then
+            echo "❌ 错误: 合并脚本不存在"
+            exit 1
+          fi
+          
+          # 执行Python脚本
           python .github/scripts/merge_non_us_ips.py "$TARGET_DATE"
           
-      - name: 清理旧文件
+          echo "✅ 合并脚本执行完成"
+          
+      # 步骤 5: 清理旧文件
+      - name: 🧹 清理过期文件
         run: |
+          echo "=== 🗑️ 开始清理过期文件 ==="
+          
+          # 检查清理脚本是否存在
+          if [ ! -f ".github/scripts/cleanup_old_files.py" ]; then
+            echo "❌ 错误: 清理脚本不存在"
+            exit 1
+          fi
+          
+          # 执行清理脚本
           python .github/scripts/cleanup_old_files.py
           
-      - name: 提交和推送更改
+          echo "✅ 文件清理完成"
+          
+      # 步骤 6: 提交更改
+      - name: 📝 提交和推送更改
         run: |
+          echo "=== 📤 开始提交更改 ==="
+          
+          # 配置Git用户
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           
-          # 添加所有更改（包括删除的文件）
+          # 显示更改状态
+          echo "📊 更改状态:"
+          git status --short
+          
+          # 添加所有更改
           git add -A
           
           # 检查是否有更改需要提交
@@ -66,10 +133,43 @@ jobs:
             echo "🟡 没有检测到更改，跳过提交"
           else
             echo "🟢 检测到更改，准备提交"
-            # 获取删除的文件列表
+            
+            # 获取详细的文件变更统计
             DELETED_FILES=$(git diff --cached --name-status | grep "^D" | wc -l)
             ADDED_FILES=$(git diff --cached --name-status | grep "^A" | wc -l)
-            git commit -m "自动: 合并和去重非美国IP地址 ${{ steps.date_calc.outputs.target_date }} [删除$DELETED_FILES个源文件，添加$ADDED_FILES个合并文件]"
+            MODIFIED_FILES=$(git diff --cached --name-status | grep "^M" | wc -l)
+            
+            echo "📈 变更统计:"
+            echo "  ➕ 新增文件: $ADDED_FILES"
+            echo "  ✏️ 修改文件: $MODIFIED_FILES"
+            echo "  🗑️ 删除文件: $DELETED_FILES"
+            
+            # 生成提交信息
+            COMMIT_MSG="🤖 自动更新: 合并和去重非美国IP地址 ${{ steps.date_calc.outputs.target_date }}"
+            COMMIT_MSG+=" [新增:$ADDED_FILES 修改:$MODIFIED_FILES 删除:$DELETED_FILES]"
+            COMMIT_MSG+=" - $(date +'%Y-%m-%d %H:%M:%S')"
+            
+            # 提交并推送
+            git commit -m "$COMMIT_MSG"
             git push
+            
             echo "✅ 更改已提交并推送"
+            echo "📋 提交信息: $COMMIT_MSG"
+          fi
+          
+      # 步骤 7: 完成通知
+      - name: ✅ 工作流完成
+        if: always()
+        run: |
+          echo ""
+          echo "=== 🎉 工作流执行完成 ==="
+          echo "🕒 完成时间: $(date)"
+          echo "📅 处理日期: ${{ steps.date_calc.outputs.target_date }}"
+          echo "🔗 工作流: ${{ github.workflow }}"
+          echo "🏃 运行ID: ${{ github.run_id }}"
+          
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ 状态: 成功完成"
+          else
+            echo "❌ 状态: 执行失败"
           fi
