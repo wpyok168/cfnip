@@ -1,4 +1,4 @@
-name: 🌐 Collect IP Addresses with Regional Filtering
+name: 🌐 Collect IP Addresses and Save to Files
 
 on:
   schedule:
@@ -14,7 +14,6 @@ env:
   PYTHON_VERSION: '3.x'
   RETAIN_DAYS: 0
   KEEP_MINIMUM_RUNS: 5
-  OUTPUT_DIR: 'non-us-ips'
 
 permissions:
   contents: write
@@ -27,7 +26,6 @@ jobs:
     outputs:
       timestamp: ${{ steps.timestamp.outputs.time }}
       files_changed: ${{ steps.changes-check.outputs.has_changes }}
-      output_files: ${{ steps.file-check.outputs.output_files }}
     
     steps:
       # ========== INITIALIZATION ==========
@@ -37,14 +35,10 @@ jobs:
           echo "📅 Current time: $(date)"
           echo "🔍 Repository: ${{ github.repository }}"
           echo "🌿 Branch: ${{ github.ref }}"
-          echo "📁 Output directory: ${{ env.OUTPUT_DIR }}"
 
       - name: 📝 Generate Timestamp
         id: timestamp
-        run: |
-          current_time=$(date -u +'%Y-%m-%d_%H-%M-%S_UTC')
-          echo "time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
-          echo "filename_time=$current_time" >> $GITHUB_OUTPUT
+        run: echo "time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
 
       # ========== CLEANUP ==========
       - name: 🧹 Cleanup Old Workflow Runs
@@ -61,139 +55,31 @@ jobs:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ========== CREATE OUTPUT DIRECTORY ==========
-      - name: 📁 Create Output Directory
-        run: |
-          echo "📂 Creating output directory: ${{ env.OUTPUT_DIR }}"
-          mkdir -p ${{ env.OUTPUT_DIR }}
-          echo "✅ Directory created successfully"
-
       # ========== PYTHON ENVIRONMENT ==========
       - name: 🐍 Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          # 移除了 cache 配置
 
       - name: 📦 Install Dependencies
         run: |
           echo "🔧 Installing Python dependencies..."
           pip install --upgrade pip
-          pip install requests ipaddress pycountry
+          pip install requests ipaddress
           echo "✅ Dependencies installed successfully"
 
-      # ========== IP COLLECTION WITH REGIONAL FILTER ==========
-      - name: 🌍 Collect Non-US IP Addresses
+      # ========== IP COLLECTION ==========
+      - name: 🌍 Collect IP Addresses
         id: ip-collection
         run: |
-          echo "🕸️ Starting non-US IP address collection..."
+          echo "🕸️ Starting IP address collection..."
           start_time=$(date +%s)
           
-          # 创建增强版的 IP 收集脚本
-          cat > collect_non_us_ips.py << 'EOF'
-import requests
-import ipaddress
-import pycountry
-import json
-from datetime import datetime
-import os
-
-def is_non_us_ip(ip):
-    """检查 IP 是否不属于美国"""
-    try:
-        # 这里使用 ip-api.com 进行地理定位查询
-        response = requests.get(f'http://ip-api.com/json/{ip}?fields=countryCode', timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('countryCode') != 'US'
-    except:
-        pass
-    return False
-
-def collect_ips():
-    """收集 IP 地址的主函数"""
-    timestamp = datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S_UTC')
-    output_dir = 'non-us-ips'
-    
-    # 非美国 IPv4 地址
-    ipv4_list = []
-    # 非美国 IPv6 地址  
-    ipv6_list = []
-    
-    # 这里替换为你实际的 IP 收集逻辑
-    # 示例：从多个来源收集 IP
-    sources = [
-        'https://cdn.jsdelivr.net/gh/lukesampson/cidr-tools@master/data/cidr.txt',
-        # 添加更多 IP 来源
-    ]
-    
-    for source in sources:
-        try:
-            response = requests.get(source, timeout=10)
-            if response.status_code == 200:
-                for line in response.text.splitlines():
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        try:
-                            network = ipaddress.ip_network(line, strict=False)
-                            # 抽样检查部分 IP 的地理位置
-                            sample_ip = str(list(network.hosts())[0]) if network.num_addresses > 1 else str(network.network_address)
-                            if is_non_us_ip(sample_ip):
-                                if network.version == 4:
-                                    ipv4_list.append(line)
-                                else:
-                                    ipv6_list.append(line)
-                        except:
-                            continue
-        except Exception as e:
-            print(f"Error processing {source}: {e}")
-    
-    # 保存到文件
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # 主文件（始终更新）
-    with open('ip.txt', 'w') as f:
-        f.write('\n'.join(ipv4_list))
-    
-    with open('ipv6.txt', 'w') as f:
-        f.write('\n'.join(ipv6_list))
-    
-    # 按时间戳保存的文件
-    ipv4_filename = f'{output_dir}/ipv4_non_us_{timestamp}.txt'
-    ipv6_filename = f'{output_dir}/ipv6_non_us_{timestamp}.txt'
-    
-    with open(ipv4_filename, 'w') as f:
-        f.write(f'# Non-US IPv4 addresses collected at {timestamp}\n')
-        f.write(f'# Total: {len(ipv4_list)} addresses\n')
-        f.write('\n'.join(ipv4_list))
-    
-    with open(ipv6_filename, 'w') as f:
-        f.write(f'# Non-US IPv6 addresses collected at {timestamp}\n')
-        f.write(f'# Total: {len(ipv6_list)} addresses\n')
-        f.write('\n'.join(ipv6_list))
-    
-    # 保存元数据
-    metadata = {
-        'timestamp': timestamp,
-        'ipv4_count': len(ipv4_list),
-        'ipv6_count': len(ipv6_list),
-        'sources': sources
-    }
-    
-    with open(f'{output_dir}/metadata_{timestamp}.json', 'w') as f:
-        json.dump(metadata, f, indent=2)
-    
-    print(f"✅ Collected {len(ipv4_list)} non-US IPv4 addresses")
-    print(f"✅ Collected {len(ipv6_list)} non-US IPv6 addresses")
-    print(f"📁 Files saved in: {output_dir}/")
-
-if __name__ == '__main__':
-    collect_ips()
-EOF
-
-          if python collect_non_us_ips.py; then
+          if python autoip6.py; then
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            echo "✅ Non-US IP collection completed successfully"
+            echo "✅ IP collection completed successfully"
             echo "⏱️ Execution time: ${duration} seconds"
             echo "result=success" >> $GITHUB_OUTPUT
           else
@@ -208,10 +94,9 @@ EOF
         run: |
           echo "📋 Checking generated files..."
           
-          # 检查主文件
           if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
             ip_count=$(wc -l < ip.txt | tr -d ' ')
-            echo "✅ ip.txt: $ip_count IPv4 addresses"
+            echo "✅ ip.txt: $ip_count IP addresses"
             echo "ip_count=$ip_count" >> $GITHUB_OUTPUT
           else
             echo "❌ ip.txt is missing or empty"
@@ -226,48 +111,20 @@ EOF
             echo "❌ ipv6.txt is missing or empty"
             exit 1
           fi
-          
-          # 检查时间戳文件
-          timestamp="${{ steps.timestamp.outputs.filename_time }}"
-          output_dir="${{ env.OUTPUT_DIR }}"
-          
-          ipv4_file="${output_dir}/ipv4_non_us_${timestamp}.txt"
-          ipv6_file="${output_dir}/ipv6_non_us_${timestamp}.txt"
-          metadata_file="${output_dir}/metadata_${timestamp}.json"
-          
-          if [ -f "$ipv4_file" ] && [ -f "$ipv6_file" ]; then
-            echo "✅ Time-stamped files created:"
-            echo "   - $ipv4_file"
-            echo "   - $ipv6_file"
-            echo "   - $metadata_file"
-            echo "output_files=true" >> $GITHUB_OUTPUT
-          else
-            echo "❌ Time-stamped files missing"
-            echo "output_files=false" >> $GITHUB_OUTPUT
-          fi
-
-      # ========== LIST GENERATED FILES ==========
-      - name: 📂 List Generated Files
-        run: |
-          echo "📁 Generated files in ${{ env.OUTPUT_DIR }}:"
-          ls -la ${{ env.OUTPUT_DIR }}/
-          echo ""
-          echo "📊 File sizes:"
-          find ${{ env.OUTPUT_DIR }} -name "*.txt" -exec wc -l {} \;
 
       # ========== CHANGES CHECK ==========
       - name: 📊 Check for Changes
         id: changes-check
         run: |
           echo "📊 Checking for file changes..."
-          if git diff --quiet HEAD -- ip.txt ipv6.txt ${{ env.OUTPUT_DIR }}; then
+          if git diff --quiet HEAD -- ip.txt ipv6.txt; then
             echo "📭 No changes detected in IP files"
             echo "has_changes=false" >> $GITHUB_OUTPUT
           else
             echo "📬 Changes detected in IP files"
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "📝 Changed files:"
-            git diff --name-only HEAD -- ip.txt ipv6.txt ${{ env.OUTPUT_DIR }}
+            git diff --name-only HEAD -- ip.txt ipv6.txt
           fi
 
       # ========== COMMIT CHANGES ==========
@@ -277,17 +134,16 @@ EOF
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: |
-            chore: update non-US IP addresses [auto]
+            chore: update IP addresses [auto]
             
             • Updated ip.txt: ${{ steps.file-check.outputs.ip_count }} IPv4 addresses
             • Updated ipv6.txt: ${{ steps.file-check.outputs.ipv6_count }} IPv6 addresses
-            • New time-stamped files in ${{ env.OUTPUT_DIR }}/
             • Timestamp: ${{ steps.timestamp.outputs.time }}
             • Trigger: ${{ github.event_name }}
           commit_user_name: '🤖 GitHub Actions Bot'
           commit_user_email: 'actions@users.noreply.github.com'
           commit_options: '--signoff'
-          file_pattern: 'ip.txt ipv6.txt ${{ env.OUTPUT_DIR }}/*'
+          file_pattern: 'ip.txt ipv6.txt'
           skip_fetch: true
           skip_checkout: true
 
@@ -295,25 +151,17 @@ EOF
       - name: 📈 Workflow Summary
         if: always()
         run: |
-          echo "## 🎯 Non-US IP Collection Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 🎯 IP Collection Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📊 Execution Details" >> $GITHUB_STEP_SUMMARY
           echo "- **Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Execution time:** ${{ steps.timestamp.outputs.time }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Output directory:** ${{ env.OUTPUT_DIR }}/" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           echo "### 📁 File Status" >> $GITHUB_STEP_SUMMARY
           echo "- **IPv4 addresses:** ${{ steps.file-check.outputs.ip_count }}" >> $GITHUB_STEP_SUMMARY
           echo "- **IPv6 addresses:** ${{ steps.file-check.outputs.ipv6_count }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Time-stamped files:** ${{ steps.file-check.outputs.output_files }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 📂 Generated Files" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          ls -1 ${{ env.OUTPUT_DIR }}/ 2>/dev/null | head -10 >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if steps.changes-check.outputs.has_changes == 'true'; then
@@ -328,11 +176,17 @@ EOF
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*Automatically generated by GitHub Actions*" >> $GITHUB_STEP_SUMMARY
 
-      # ========== CLEANUP OLD FILES ==========
-      - name: 🗑️ Cleanup Old Files (Optional)
-        if: success()
+      # ========== NOTIFICATION ==========
+      - name: 🎉 Success Notification
+        if: success() && steps.changes-check.outputs.has_changes == 'true'
         run: |
-          echo "🧹 Cleaning up files older than 7 days..."
-          find ${{ env.OUTPUT_DIR }} -name "*.txt" -mtime +7 -exec echo "Deleting: {}" \;
-          # 实际删除取消注释下一行
-          # find ${{ env.OUTPUT_DIR }} -name "*.txt" -mtime +7 -delete
+          echo "🎉 Successfully updated IP addresses!"
+          echo "📊 IPv4: ${{ steps.file-check.outputs.ip_count }} addresses"
+          echo "📊 IPv6: ${{ steps.file-check.outputs.ipv6_count }} addresses"
+
+      - name: ℹ️ No Changes Notification
+        if: success() && steps.changes-check.outputs.has_changes == 'false'
+        run: |
+          echo "ℹ️ IP addresses are already up to date."
+          echo "📊 Current IPv4: ${{ steps.file-check.outputs.ip_count }} addresses"
+          echo "📊 Current IPv6: ${{ steps.file-check.outputs.ipv6_count }} addresses"
