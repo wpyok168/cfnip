@@ -2,109 +2,43 @@ name: 🌐 收集IP地址并保存到文件
 
 on:
   schedule:
-    - cron: '30 * * * *'   # 主要调度：每小时的30分钟运行
-    - cron: '0 * * * *'    # 备用调度：每小时的0分钟运行（整点）
+    - cron: '*/5 * * * *'   # 每小时的30分钟运行一次（UTC时间）
   workflow_dispatch:        # 允许手动触发
     inputs:
       reason:
         description: '手动触发原因'
         required: false
         default: '手动执行'
-  push:                    # 代码推送时触发（备用）
-    branches: [ main, master ]
-    paths:
-      - '.github/workflows/**'
-      - 'autoip6.py'
-      - 'scripts/**'
-
-# ========== 权限配置 ==========
-permissions:
-  contents: write    # 必需：提交 IP 文件变更
-  actions: write     # 必需：清理工作流记录
-  checks: write      # 推荐：PR 检查状态
 
 env:
   PYTHON_VERSION: '3.x'
   RETAIN_DAYS: 0
   KEEP_MINIMUM_RUNS: 5
 
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   collect-ip-addresses:
     name: 🚀 收集IP地址
     runs-on: ubuntu-latest
-    
     outputs:
       timestamp: ${{ steps.timestamp.outputs.time }}
       files_changed: ${{ steps.changes-check.outputs.has_changes }}
-      trigger_type: ${{ steps.debug.outputs.trigger_type }}
-      ip_count: ${{ steps.file-check.outputs.ip_count }}
-      ipv6_count: ${{ steps.file-check.outputs.ipv6_count }}
     
     steps:
-      # ========== 调试信息 ==========
-      - name: 🔍 调试触发信息
-        id: debug
+      # ========== 初始化 ==========
+      - name: ⏰ 开始工作流
         run: |
           echo "🎯 工作流触发方式: ${{ github.event_name }}"
           echo "📅 当前时间: $(date)"
-          echo "🕐 UTC时间: $(date -u)"
           echo "🔍 仓库: ${{ github.repository }}"
           echo "🌿 分支: ${{ github.ref }}"
-          echo "👤 触发者: ${{ github.actor }}"
-          echo "🏷️ 工作流: ${{ github.workflow }}"
-          echo "🆔 运行ID: ${{ github.run_id }}"
-          
-          # 设置触发类型输出
-          if [ "${{ github.event_name }}" == "schedule" ]; then
-            echo "⏰ 触发类型: 定时调度"
-            echo "trigger_type=scheduled" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "👆 触发类型: 手动执行"
-            echo "📝 原因: ${{ github.event.inputs.reason }}"
-            echo "trigger_type=manual" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "push" ]; then
-            echo "📤 触发类型: 代码推送"
-            echo "trigger_type=push" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "🔀 触发类型: 拉取请求"
-            echo "trigger_type=pull_request" >> $GITHUB_OUTPUT
-          else
-            echo "❓ 触发类型: 其他 (${{ github.event_name }})"
-            echo "trigger_type=other" >> $GITHUB_OUTPUT
-          fi
-
-      # ========== 权限检查 ==========
-      - name: 🔐 检查权限
-        run: |
-          echo "🔍 权限调试信息:"
-          echo "• 触发事件: ${{ github.event_name }}"
-          echo "• 仓库: ${{ github.repository }}"
-          echo "• 执行者: ${{ github.actor }}"
-          echo "• 工作流: ${{ github.workflow }}"
-          
-          # 测试写入权限
-          if touch test-permission.txt && echo "权限测试" > test-permission.txt; then
-            echo "✅ 文件写入权限: 正常"
-            rm test-permission.txt
-          else
-            echo "❌ 文件写入权限: 失败"
-            exit 1
-          fi
-          
-          # 测试目录创建权限
-          if mkdir -p test_dir && rmdir test_dir; then
-            echo "✅ 目录操作权限: 正常"
-          else
-            echo "❌ 目录操作权限: 失败"
-            exit 1
-          fi
 
       - name: 📝 生成时间戳
         id: timestamp
-        run: |
-          echo "time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
-          echo "date=$(date -u +'%Y%m%d')" >> $GITHUB_OUTPUT
-          echo "hour=$(date -u +'%H')" >> $GITHUB_OUTPUT
+        run: echo "time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
 
       # ========== 清理 ==========
       - name: 🧹 清理旧工作流运行记录
@@ -113,7 +47,6 @@ jobs:
           retain_days: ${{ env.RETAIN_DAYS }}
           keep_minimum_runs: ${{ env.KEEP_MINIMUM_RUNS }}
           repository: ${{ github.repository }}
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       # ========== 仓库设置 ==========
       - name: 📥 检出仓库
@@ -121,59 +54,36 @@ jobs:
         with:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
-          ref: ${{ github.ref }}
 
       # ========== Python环境 ==========
       - name: 🐍 设置Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
 
       - name: 📦 安装依赖
         run: |
           echo "🔧 安装Python依赖..."
-          python -m pip install --upgrade pip
-          pip install requests ipaddress tqdm
+          pip install --upgrade pip
+          pip install requests ipaddress
           echo "✅ 依赖安装成功"
-          
-          # 验证Python环境
-          echo "🐍 Python版本: $(python --version)"
-          echo "📦 pip版本: $(pip --version)"
 
       # ========== IP地址收集 ==========
       - name: 🌍 收集IP地址
         id: ip-collection
         run: |
           echo "🕸️ 开始收集IP地址..."
-          echo "📋 触发类型: ${{ steps.debug.outputs.trigger_type }}"
-          echo "⏰ 时间戳: ${{ steps.timestamp.outputs.time }}"
-          
-          # 创建必要的目录
-          mkdir -p non_us_ips
-          mkdir -p logs
-          
           start_time=$(date +%s)
-          current_date=$(date +%Y%m%d)
-          log_file="logs/ip_collection_${current_date}.log"
           
-          echo "📝 开始时间: $(date)" | tee -a "$log_file"
-          
-          # 执行IP收集脚本
-          if python autoip6.py 2>&1 | tee -a "$log_file"; then
+          if python autoip6.py; then
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            echo "✅ IP地址收集完成" | tee -a "$log_file"
-            echo "⏱️ 执行时间: ${duration} 秒" | tee -a "$log_file"
+            echo "✅ IP地址收集完成"
+            echo "⏱️ 执行时间: ${duration} 秒"
             echo "result=success" >> $GITHUB_OUTPUT
-            echo "duration=${duration}" >> $GITHUB_OUTPUT
           else
-            end_time=$(date +%s)
-            duration=$((end_time - start_time))
-            echo "❌ IP地址收集失败" | tee -a "$log_file"
-            echo "⏱️ 执行时间: ${duration} 秒" | tee -a "$log_file"
+            echo "❌ IP地址收集失败"
             echo "result=failure" >> $GITHUB_OUTPUT
-            echo "duration=${duration}" >> $GITHUB_OUTPUT
             exit 1
           fi
 
@@ -182,40 +92,20 @@ jobs:
         id: file-check
         run: |
           echo "📋 检查生成的文件..."
-          echo "📁 当前目录内容:"
-          ls -la
           
-          # 检查IP文件
           if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
             ip_count=$(wc -l < ip.txt | tr -d ' ')
-            file_size=$(wc -c < ip.txt | tr -d ' ')
-            echo "✅ ip.txt: $ip_count 个IPv4地址, 文件大小: $file_size 字节"
+            echo "✅ ip.txt: $ip_count 个IPv4地址"
             echo "ip_count=$ip_count" >> $GITHUB_OUTPUT
-            echo "ip_size=$file_size" >> $GITHUB_OUTPUT
-            
-            # 显示前5个IP作为样本
-            echo "📄 IPv4样本:"
-            head -5 ip.txt | while read ip; do
-              echo "  • $ip"
-            done
           else
             echo "❌ ip.txt 文件缺失或为空"
             exit 1
           fi
           
-          # 检查IPv6文件
           if [ -f "ipv6.txt" ] && [ -s "ipv6.txt" ]; then
             ipv6_count=$(wc -l < ipv6.txt | tr -d ' ')
-            file_size=$(wc -c < ipv6.txt | tr -d ' ')
-            echo "✅ ipv6.txt: $ipv6_count 个IPv6地址, 文件大小: $file_size 字节"
+            echo "✅ ipv6.txt: $ipv6_count 个IPv6地址"
             echo "ipv6_count=$ipv6_count" >> $GITHUB_OUTPUT
-            echo "ipv6_size=$file_size" >> $GITHUB_OUTPUT
-            
-            # 显示前3个IPv6作为样本
-            echo "📄 IPv6样本:"
-            head -3 ipv6.txt | while read ip; do
-              echo "  • $ip"
-            done
           else
             echo "❌ ipv6.txt 文件缺失或为空"
             exit 1
@@ -223,37 +113,18 @@ jobs:
           
           # 检查非美国区域IP文件
           echo "🔍 检查非美国区域IP文件..."
-          if [ -d "non_us_ips" ]; then
-            non_us_files=$(find non_us_ips -name "non_us_ips_*.txt" -type f 2>/dev/null | wc -l)
-            if [ "$non_us_files" -gt 0 ]; then
-              latest_non_us=$(find non_us_ips -name "non_us_ips_*.txt" -type f | sort -r | head -1)
-              non_us_count=$(wc -l < "$latest_non_us" 2>/dev/null | tr -d ' ' || echo "0")
-              echo "✅ 非美国区域IP文件: $non_us_files 个文件，最新文件包含 $non_us_count 行"
-              echo "non_us_files=$non_us_files" >> $GITHUB_OUTPUT
-              echo "non_us_count=$non_us_count" >> $GITHUB_OUTPUT
-              echo "latest_non_us=$latest_non_us" >> $GITHUB_OUTPUT
-              
-              # 显示非美国区域文件列表
-              echo "📁 非美国区域文件列表:"
-              find non_us_ips -name "non_us_ips_*.txt" -type f | sort | while read file; do
-                count=$(wc -l < "$file" 2>/dev/null | tr -d ' ' || echo "0")
-                echo "  • $(basename "$file"): $count 行"
-              done
-            else
-              echo "⚠️ 未找到非美国区域IP文件"
-              echo "non_us_files=0" >> $GITHUB_OUTPUT
-              echo "non_us_count=0" >> $GITHUB_OUTPUT
-            fi
+          non_us_files=$(find non_us_ips -name "non_us_ips_*.txt" -type f 2>/dev/null | wc -l)
+          if [ "$non_us_files" -gt 0 ]; then
+            latest_non_us=$(find non_us_ips -name "non_us_ips_*.txt" -type f | sort -r | head -1)
+            non_us_count=$(wc -l < "$latest_non_us" | tr -d ' ')
+            echo "✅ 非美国区域IP文件: $non_us_files 个文件，最新文件包含 $non_us_count 行"
+            echo "non_us_files=$non_us_files" >> $GITHUB_OUTPUT
+            echo "non_us_count=$non_us_count" >> $GITHUB_OUTPUT
+            echo "latest_non_us=$latest_non_us" >> $GITHUB_OUTPUT
           else
-            echo "⚠️ non_us_ips 目录不存在"
+            echo "⚠️ 未找到非美国区域IP文件"
             echo "non_us_files=0" >> $GITHUB_OUTPUT
             echo "non_us_count=0" >> $GITHUB_OUTPUT
-          fi
-          
-          # 检查日志文件
-          if [ -d "logs" ]; then
-            log_count=$(find logs -name "*.log" -type f | wc -l)
-            echo "📊 日志文件: $log_count 个"
           fi
 
       # ========== 变更检查 ==========
@@ -261,26 +132,15 @@ jobs:
         id: changes-check
         run: |
           echo "📊 检查文件变更..."
-          
-          # 配置Git用户信息（用于diff）
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Actions"
-          
-          # 添加所有可能变更的文件
-          git add ip.txt ipv6.txt non_us_ips/ logs/ || true
-          
-          # 检查是否有未提交的变更
-          if git diff --cached --quiet; then
+          # 检查主要IP文件和非美国区域IP文件
+          if git diff --quiet HEAD -- ip.txt ipv6.txt non_us_ips/; then
             echo "📭 未检测到文件变更"
             echo "has_changes=false" >> $GITHUB_OUTPUT
           else
             echo "📬 检测到文件变更"
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "📝 变更文件列表:"
-            git diff --cached --name-only
-            echo ""
-            echo "📋 变更详情:"
-            git diff --cached --stat
+            echo "📝 变更文件:"
+            git diff --name-only HEAD -- ip.txt ipv6.txt non_us_ips/
           fi
 
       # ========== 提交变更 ==========
@@ -290,26 +150,19 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: |
-            chore: 自动更新IP地址库
+            chore: 更新IP地址 [自动]
             
-            • 触发类型: ${{ steps.debug.outputs.trigger_type }}
-            • IPv4地址: ${{ steps.file-check.outputs.ip_count }} 个
-            • IPv6地址: ${{ steps.file-check.outputs.ipv6_count }} 个
-            • 执行时间: ${{ steps.timestamp.outputs.time }}
-            • 运行ID: ${{ github.run_id }}
-            
-            [skip ci]
-          commit_user_name: '🤖 GitHub Actions Bot'
+            • 更新 ip.txt: ${{ steps.file-check.outputs.ip_count }} 个IPv4地址
+            • 更新 ipv6.txt: ${{ steps.file-check.outputs.ipv6_count }} 个IPv6地址
+            • 新增非美国区域IP文件
+            • 时间戳: ${{ steps.timestamp.outputs.time }}
+            • 触发方式: ${{ github.event_name }}
+          commit_user_name: '🤖 GitHub Actions 机器人'
           commit_user_email: 'actions@users.noreply.github.com'
-          commit_options: '--no-verify --signoff'
-          file_pattern: |
-            ip.txt
-            ipv6.txt
-            non_us_ips/**
-            logs/**
-          skip_fetch: false
-          skip_checkout: false
-          push_options: '--no-verify'
+          commit_options: '--signoff'
+          file_pattern: 'ip.txt ipv6.txt non_us_ips/*'
+          skip_fetch: true
+          skip_checkout: true
 
       # ========== 工作流总结 ==========
       - name: 📈 工作流总结
@@ -317,78 +170,55 @@ jobs:
         run: |
           echo "## 🎯 IP地址收集总结" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
           echo "### 📊 执行详情" >> $GITHUB_STEP_SUMMARY
-          echo "- **触发方式:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **触发类型:** ${{ steps.debug.outputs.trigger_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **触发方式:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **执行时间:** ${{ steps.timestamp.outputs.time }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **运行时长:** ${{ steps.ip-collection.outputs.duration || 'N/A' }} 秒" >> $GITHUB_STEP_SUMMARY
           echo "- **仓库:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **分支:** \`${{ github.ref }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **运行ID:** \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           echo "### 📁 文件状态" >> $GITHUB_STEP_SUMMARY
-          echo "- **IPv4地址数量:** \`${{ steps.file-check.outputs.ip_count }}\` 个" >> $GITHUB_STEP_SUMMARY
-          echo "- **IPv6地址数量:** \`${{ steps.file-check.outputs.ipv6_count }}\` 个" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPv4地址数量:** ${{ steps.file-check.outputs.ip_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPv6地址数量:** ${{ steps.file-check.outputs.ipv6_count }}" >> $GITHUB_STEP_SUMMARY
           
+          # 添加非美国区域IP信息
           if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
-            echo "- **非美国区域IP文件:** \`${{ steps.file-check.outputs.non_us_files }}\` 个文件" >> $GITHUB_STEP_SUMMARY
-            echo "- **最新非美国IP文件:** \`${{ steps.file-check.outputs.latest_non_us }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **非美国区域IP文件:** ${{ steps.file-check.outputs.non_us_files }} 个文件" >> $GITHUB_STEP_SUMMARY
+            echo "- **最新非美国IP文件:** ${{ steps.file-check.outputs.latest_non_us }}" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if steps.changes-check.outputs.has_changes == 'true'; then
             echo "### ✅ 变更已提交" >> $GITHUB_STEP_SUMMARY
-            echo "IP地址文件已更新并自动提交到仓库。" >> $GITHUB_STEP_SUMMARY
+            echo "IP地址文件已更新并自动提交。" >> $GITHUB_STEP_SUMMARY
             if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
-              echo "🌍 非美国区域IP文件已保存到 \`non_us_ips/\` 目录" >> $GITHUB_STEP_SUMMARY
+              echo "📁 非美国区域IP文件已保存到仓库" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "### 📭 无变更" >> $GITHUB_STEP_SUMMARY
-            echo "IP地址文件已是最新版本，无需更新。" >> $GITHUB_STEP_SUMMARY
+            echo "IP地址文件已是最新版本。" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔄 下次执行" >> $GITHUB_STEP_SUMMARY
-          echo "- 整点 (00分) 或 30分钟时自动运行" >> $GITHUB_STEP_SUMMARY
-          echo "- 手动触发: 在 Actions 页面点击 \"Run workflow\"" >> $GITHUB_STEP_SUMMARY
-          echo "- 代码更新: 修改工作流文件或脚本时自动运行" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
           echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*(由 🤖 GitHub Actions 自动生成)*" >> $GITHUB_STEP_SUMMARY
+          echo "*由 GitHub Actions 自动生成*" >> $GITHUB_STEP_SUMMARY
 
       # ========== 通知 ==========
       - name: 🎉 成功通知
         if: success() && steps.changes-check.outputs.has_changes == 'true'
         run: |
-          echo "🎉 成功更新IP地址库！"
-          echo "📊 IPv4地址: ${{ steps.file-check.outputs.ip_count }} 个"
-          echo "📊 IPv6地址: ${{ steps.file-check.outputs.ipv6_count }} 个"
-          echo "🔧 触发类型: ${{ steps.debug.outputs.trigger_type }}"
-          echo "⏱️ 执行时间: ${{ steps.ip-collection.outputs.duration }} 秒"
+          echo "🎉 成功更新IP地址！"
+          echo "📊 IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址"
+          echo "📊 IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址"
           if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
             echo "🌍 非美国区域IP: ${{ steps.file-check.outputs.non_us_files }} 个文件已保存"
           fi
-          echo "📝 变更已自动提交到仓库"
 
       - name: ℹ️ 无变更通知
         if: success() && steps.changes-check.outputs.has_changes == 'false'
         run: |
-          echo "ℹ️ IP地址库已是最新版本，无需更新。"
+          echo "ℹ️ IP地址已是最新版本。"
           echo "📊 当前IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址"
           echo "📊 当前IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址"
-          echo "🔧 触发类型: ${{ steps.debug.outputs.trigger_type }}"
           if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
             echo "📁 非美国区域IP文件: ${{ steps.file-check.outputs.non_us_files }} 个"
           fi
-
-      - name: ⚠️ 失败通知
-        if: failure()
-        run: |
-          echo "❌ IP地址收集失败！"
-          echo "🔧 触发类型: ${{ steps.debug.outputs.trigger_type }}"
-          echo "⏰ 执行时间: ${{ steps.timestamp.outputs.time }}"
-          echo "📝 请检查日志了解详细错误信息"
-          exit 1
