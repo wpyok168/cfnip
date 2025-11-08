@@ -21,7 +21,6 @@ def cleanup_old_files():
     cutoff_date = datetime.now() - timedelta(days=retention_days)
     
     print(f"清理截止日期: {cutoff_date.date()}")
-    print(f"保留最近 {retention_days} 天的文件")
     
     base_dir = "non_us_ips"
     deleted_count = 0
@@ -68,7 +67,7 @@ def cleanup_old_files():
 if __name__ == "__main__":
     try:
         cleanup_old_files()
-        print("✅ 清理脚本执行成功")
     except Exception as e:
-        print(f"❌ 清理脚本执行失败: {e}")
+        print(f"清理脚本执行失败: {e}")
+        import sys
         sys.exit(1)
