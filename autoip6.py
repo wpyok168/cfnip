@@ -16,14 +16,21 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from datetime import datetime
+import pytz
 
 class CFIPCollector:
     def __init__(self, urls_config='urls.json', main_config='config.json'):
         """初始化配置"""
+        # 设置北京时区
+        self.beijing_tz = pytz.timezone('Asia/Shanghai')
         self.load_urls_config(urls_config)
         self.load_main_config(main_config)
         self.setup_global_variables()
         print("Cloudflare IP收集器初始化完成")
+        
+    def get_beijing_time(self):
+        """获取北京时间"""
+        return datetime.now(self.beijing_tz)
         
     def load_urls_config(self, config_file):
         """加载URL列表配置"""
@@ -248,7 +255,7 @@ class CFIPCollector:
                 progress_interval = self.config['progress_settings']['progress_interval']
                 if self.completed_count % progress_interval == 0 or self.completed_count == self.total_count:
                     success_rate = (self.success_count / self.completed_count * 100) if self.completed_count > 0 else 0
-                    print(f'📊 进度: {completed_count}/{total_count} (成功率: {success_rate:.1f}%)')
+                    print(f'📊 进度: {self.completed_count}/{self.total_count} (成功率: {success_rate:.1f}%)')
         
         return ip, location, success
 
@@ -355,6 +362,7 @@ class CFIPCollector:
         failed_count = 0
         
         port = self.config['output_settings']['port']
+        current_time = self.get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')
         
         for ip, location in sorted_results:
             if location == '未知':
@@ -377,7 +385,7 @@ class CFIPCollector:
         if self.config['output_settings']['save_all_ips']:
             with open(filename, 'w', encoding='utf-8') as file:
                 file.write(f"# Cloudflare IP地址列表\n")
-                file.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                file.write(f"# 生成时间(北京时间): {current_time}\n")
                 file.write(f"# 类型: {'IPv6' if is_ipv6 else 'IPv4'}\n")
                 file.write(f"# 总数: {len(all_results)}, 美国: {len(us_results)}, 非美国: {len(non_us_results)}\n\n")
                 for line in all_results:
@@ -399,13 +407,13 @@ class CFIPCollector:
             return None
             
         # 生成日期时间文件名
-        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        current_time = self.get_beijing_time().strftime("%Y%m%d_%H%M%S")
         non_us_folder = self.config['output_settings']['non_us_folder']
         filename = f"{non_us_folder}/non_us_ips_{current_time}.txt"
         
         with open(filename, 'w', encoding='utf-8') as file:
             file.write(f"# 非美国区域Cloudflare IP收集\n")
-            file.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            file.write(f"# 生成时间(北京时间): {self.get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
             file.write(f"# IPv4数量: {len(non_us_ipv4)}, IPv6数量: {len(non_us_ipv6)}\n")
             file.write(f"# 格式: IP:端口#地理位置\n\n")
             
@@ -462,12 +470,14 @@ class CFIPCollector:
         print(f'  • IPv6查询线程: {self.config["request_settings"]["max_workers_ipv6"]}')
         print(f'  • 地理位置查询: {"启用" if self.config["location_settings"]["enable_location_query"] else "禁用"}')
         print(f'  • 保存非美国IP: {"是" if self.config["output_settings"]["save_non_us_separately"] else "否"}')
+        print(f'  • 使用时区: 北京时间(Asia/Shanghai)')
 
     def main(self):
         """主函数"""
         print("=" * 50)
         print("🌐 Cloudflare IP地址收集器 v2.0")
         print("=" * 50)
+        print(f"🕐 当前北京时间: {self.get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')}")
         
         # 打印配置摘要
         self.print_config_summary()
@@ -524,6 +534,7 @@ class CFIPCollector:
         
         print(f"\n" + '='*50)
         print("🎊 任务完成！")
+        print(f"🕐 完成时间(北京时间): {self.get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')}")
         print("=" * 50)
 
 if __name__ == "__main__":
