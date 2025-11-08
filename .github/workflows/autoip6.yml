@@ -83,9 +83,13 @@ jobs:
           duration=$((end_time - start_time))
           echo "⏱️ 脚本执行时间: ${duration} 秒"
           
-          # 检查生成的文件
+          # 检查生成的文件和文件夹
           echo "📋 检查生成的文件..."
           ls -la *.txt
+          echo "📁 检查结果文件夹..."
+          if [ -d "cf_ip_results" ]; then
+            ls -la cf_ip_results/
+          fi
 
       # ========== 文件验证 ==========
       - name: 🔍 验证生成的文件
@@ -94,18 +98,17 @@ jobs:
           echo "📊 文件验证报告:"
           echo "========================"
           
+          # 主要文件验证
           declare -A file_info=(
             ["ip.txt"]="IPv4地址"
             ["ipv6.txt"]="IPv6地址" 
-            ["non_us_ip.txt"]="非美国IPv4地址"
-            ["non_us_ipv6.txt"]="非美国IPv6地址"
           )
           
           all_files_valid=true
           
           for file in "${!file_info[@]}"; do
             if [ -f "$file" ] && [ -s "$file" ]; then
-              line_count=$(grep -c -v '^#' "$file" | tr -d ' ' || wc -l < "$file" | tr -d ' ')
+              line_count=$(wc -l < "$file" | tr -d ' ')
               size=$(du -h "$file" | cut -f1)
               echo "✅ $file: ${file_info[$file]} | 行数: $line_count | 大小: $size"
               echo "${file}_count=$line_count" >> $GITHUB_OUTPUT
@@ -115,6 +118,39 @@ jobs:
               echo "${file}_count=0" >> $GITHUB_OUTPUT
             fi
           done
+          
+          # 检查结果文件夹
+          if [ -d "cf_ip_results" ]; then
+            result_files_count=$(find cf_ip_results -name "non_us_ips_*.txt" | wc -l)
+            if [ "$result_files_count" -gt 0 ]; then
+              echo "✅ cf_ip_results: 非美国IP文件夹 | 文件数: $result_files_count"
+              
+              # 获取最新的非美国IP文件
+              latest_file=$(find cf_ip_results -name "non_us_ips_*.txt" | sort -r | head -n1)
+              if [ -n "$latest_file" ]; then
+                non_us_count=$(wc -l < "$latest_file" | tr -d ' ')
+                echo "non_us_total_count=$non_us_count" >> $GITHUB_OUTPUT
+                echo "📄 最新非美国IP文件: $latest_file (行数: $non_us_count)"
+                
+                # 统计IPv4和IPv6数量
+                ipv4_in_non_us=$(grep -c -v "\\[.*\\]" "$latest_file" | tr -d ' ' || echo "0")
+                ipv6_in_non_us=$(grep -c "\\[.*\\]" "$latest_file" | tr -d ' ' || echo "0")
+                echo "non_us_ipv4_count=$ipv4_in_non_us" >> $GITHUB_OUTPUT
+                echo "non_us_ipv6_count=$ipv6_in_non_us" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "⚠️ cf_ip_results: 文件夹存在但无结果文件"
+              echo "non_us_total_count=0" >> $GITHUB_OUTPUT
+              echo "non_us_ipv4_count=0" >> $GITHUB_OUTPUT
+              echo "non_us_ipv6_count=0" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "❌ cf_ip_results: 结果文件夹缺失"
+            all_files_valid=false
+            echo "non_us_total_count=0" >> $GITHUB_OUTPUT
+            echo "non_us_ipv4_count=0" >> $GITHUB_OUTPUT
+            echo "non_us_ipv6_count=0" >> $GITHUB_OUTPUT
+          fi
           
           if [ "$all_files_valid" = false ]; then
             echo "❌ 部分文件验证失败"
@@ -131,8 +167,11 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # 添加所有txt文件到暂存区
+          # 添加所有txt文件和结果文件夹到暂存区
           git add *.txt
+          if [ -d "cf_ip_results" ]; then
+            git add cf_ip_results/
+          fi
           
           # 检查是否有变更
           if git diff --cached --quiet; then
@@ -154,8 +193,9 @@ jobs:
           
           • 更新 IPv4 地址: ${{ steps.verify-files.outputs.ip_txt_count }} 个
           • 更新 IPv6 地址: ${{ steps.verify-files.outputs.ipv6_txt_count }} 个  
-          • 非美国 IPv4: ${{ steps.verify-files.outputs.non_us_ip_txt_count }} 个
-          • 非美国 IPv6: ${{ steps.verify-files.outputs.non_us_ipv6_txt_count }} 个
+          • 非美国 IPv4: ${{ steps.verify-files.outputs.non_us_ipv4_count }} 个
+          • 非美国 IPv6: ${{ steps.verify-files.outputs.non_us_ipv6_count }} 个
+          • 非美国 IP 总数: ${{ steps.verify-files.outputs.non_us_total_count }} 个
           • 更新时间: ${{ steps.timestamp.outputs.time }}
           • 触发方式: ${{ github.event.name }}
           
@@ -186,9 +226,22 @@ jobs:
           echo "|----------|------|------|" >> $GITHUB_STEP_SUMMARY
           echo "| IPv4 地址 | ${{ steps.verify-files.outputs.ip_txt_count }} | ✅ |" >> $GITHUB_STEP_SUMMARY
           echo "| IPv6 地址 | ${{ steps.verify-files.outputs.ipv6_txt_count }} | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| 非美国 IPv4 | ${{ steps.verify-files.outputs.non_us_ip_txt_count }} | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| 非美国 IPv6 | ${{ steps.verify-files.outputs.non_us_ipv6_txt_count }} | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| 非美国 IPv4 | ${{ steps.verify-files.outputs.non_us_ipv4_count }} | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| 非美国 IPv6 | ${{ steps.verify-files.outputs.non_us_ipv6_count }} | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| 非美国 IP 总数 | ${{ steps.verify-files.outputs.non_us_total_count }} | ✅ |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # 显示结果文件夹信息
+          if [ -d "cf_ip_results" ]; then
+            echo "### 📂 结果文件夹" >> $GITHUB_STEP_SUMMARY
+            result_files=$(find cf_ip_results -name "non_us_ips_*.txt" | wc -l)
+            echo "- **结果文件数量:** $result_files 个" >> $GITHUB_STEP_SUMMARY
+            latest_file=$(find cf_ip_results -name "non_us_ips_*.txt" | sort -r | head -n1)
+            if [ -n "$latest_file" ]; then
+              echo "- **最新文件:** \`$latest_file\`" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
           
           if steps.check-changes.outputs.changes_detected == 'true'; then
             echo "### ✅ 变更已提交" >> $GITHUB_STEP_SUMMARY
@@ -214,8 +267,9 @@ jobs:
           echo "📊 统计信息:"
           echo "  - IPv4地址: ${{ steps.verify-files.outputs.ip_txt_count }} 个"
           echo "  - IPv6地址: ${{ steps.verify-files.outputs.ipv6_txt_count }} 个"
-          echo "  - 非美国IPv4: ${{ steps.verify-files.outputs.non_us_ip_txt_count }} 个"
-          echo "  - 非美国IPv6: ${{ steps.verify-files.outputs.non_us_ipv6_txt_count }} 个"
+          echo "  - 非美国IPv4: ${{ steps.verify-files.outputs.non_us_ipv4_count }} 个"
+          echo "  - 非美国IPv6: ${{ steps.verify-files.outputs.non_us_ipv6_count }} 个"
+          echo "  - 非美国IP总数: ${{ steps.verify-files.outputs.non_us_total_count }} 个"
           echo "✅ 变更已自动提交到仓库"
 
       - name: ℹ️ 无变更通知
@@ -225,8 +279,9 @@ jobs:
           echo "📊 当前统计:"
           echo "  - IPv4地址: ${{ steps.verify-files.outputs.ip_txt_count }} 个"
           echo "  - IPv6地址: ${{ steps.verify-files.outputs.ipv6_txt_count }} 个"
-          echo "  - 非美国IPv4: ${{ steps.verify-files.outputs.non_us_ip_txt_count }} 个"
-          echo "  - 非美国IPv6: ${{ steps.verify-files.outputs.non_us_ipv6_txt_count }} 个"
+          echo "  - 非美国IPv4: ${{ steps.verify-files.outputs.non_us_ipv4_count }} 个"
+          echo "  - 非美国IPv6: ${{ steps.verify-files.outputs.non_us_ipv6_count }} 个"
+          echo "  - 非美国IP总数: ${{ steps.verify-files.outputs.non_us_total_count }} 个"
 
       - name: ⚠️ 失败通知
         if: failure()
