@@ -49,6 +49,48 @@ def get_files_by_date(target_date):
     
     return sorted(files)
 
+def debug_file_system():
+    """调试文件系统状态"""
+    print("=== 文件系统调试信息 ===")
+    
+    # 检查工作目录
+    print(f"当前工作目录: {os.getcwd()}")
+    
+    # 检查 non_us_ips 目录
+    base_dir = "non_us_ips"
+    if os.path.exists(base_dir):
+        print(f"✅ {base_dir} 目录存在")
+        print("目录内容:")
+        for root, dirs, files in os.walk(base_dir):
+            level = root.replace(base_dir, '').count(os.sep)
+            indent = ' ' * 2 * level
+            print(f'{indent}{os.path.basename(root)}/')
+            subindent = ' ' * 2 * (level + 1)
+            for file in files:
+                if file.endswith('.txt'):
+                    file_path = os.path.join(root, file)
+                    file_size = os.path.getsize(file_path)
+                    print(f'{subindent}{file} ({file_size} bytes)')
+    else:
+        print(f"❌ {base_dir} 目录不存在")
+        
+    # 检查 merged 目录和文件
+    merged_dir = "non_us_ips/merged"
+    if os.path.exists(merged_dir):
+        print(f"\n✅ {merged_dir} 目录存在")
+        merged_files = [f for f in os.listdir(merged_dir) if f.endswith('.txt')]
+        if merged_files:
+            print("合并文件:")
+            for file in sorted(merged_files)[-5:]:  # 显示最近5个文件
+                file_path = os.path.join(merged_dir, file)
+                file_size = os.path.getsize(file_path)
+                mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+                print(f"  {file} ({file_size} bytes, 修改时间: {mtime})")
+        else:
+            print("  ❌ 没有合并文件")
+    else:
+        print(f"❌ {merged_dir} 目录不存在")
+
 def merge_and_deduplicate_ips(target_date):
     """
     合并指定日期的文件，并去重IP地址
@@ -166,8 +208,7 @@ def main():
     
     if success:
         print("=== 合并去重成功 ===")
-        # 运行调试脚本来验证文件
-        from .debug_files import debug_file_system
+        # 运行调试函数
         debug_file_system()
         sys.exit(0)
     else:
