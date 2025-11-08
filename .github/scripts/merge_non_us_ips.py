@@ -3,36 +3,19 @@ import os
 import sys
 from datetime import datetime, timedelta
 import glob
-import re
 
-def is_valid_ip(ip):
-    """验证IP地址格式是否正确"""
-    if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
-        return False
-    
-    parts = ip.split('.')
-    for part in parts:
-        if not part.isdigit() or not (0 <= int(part) <= 255):
-            return False
-    
-    return True
-
-def extract_clean_ip(line):
-    """从行中提取并清理IP地址"""
-    line = line.strip()
+def extract_original_line_info(line):
+    """提取原始行的信息，完全保留原始格式"""
+    line = line.rstrip('\n\r')  # 只移除行尾的换行符
     
     if not line or line.startswith('#'):
         return None
     
-    # 直接取整行作为IP（假设每行只有一个IP）
-    ip_candidate = line.split()[0]  # 取第一个单词
-    ip_candidate = ip_candidate.split(':')[0]  # 移除端口
-    ip_candidate = ip_candidate.split('/')[0]  # 移除CIDR
+    # 检查是否包含IP地址模式（基本验证）
+    if '.' not in line or len(line) < 7:  # 最小IP长度
+        return None
     
-    if is_valid_ip(ip_candidate):
-        return ip_candidate
-    
-    return None
+    return line
 
 def get_files_by_date(target_date):
     """根据日期获取匹配的文件"""
@@ -57,7 +40,7 @@ def get_files_by_date(target_date):
 
 def merge_and_deduplicate_ips(target_date):
     """
-    合并指定日期的文件，并去重IP地址
+    合并指定日期的文件，并去重IP地址，完全保留原始格式
     """
     print(f"开始处理日期: {target_date}")
     
@@ -91,40 +74,43 @@ def merge_and_deduplicate_ips(target_date):
     os.makedirs(merged_dir, exist_ok=True)
     print(f"合并目录: {merged_dir} (存在: {os.path.exists(merged_dir)})")
     
-    # 使用集合进行去重
-    unique_ips = set()
+    # 使用集合存储唯一的行内容
+    unique_lines = set()
     total_lines_processed = 0
+    valid_lines_count = 0
     
     for file_path in files:
         try:
             print(f"处理文件: {os.path.basename(file_path)}")
-            file_ips_count = 0
+            file_valid_lines = 0
             
             with open(file_path, 'r', encoding='utf-8') as f:
                 for line_num, line in enumerate(f, 1):
                     total_lines_processed += 1
-                    clean_ip = extract_clean_ip(line)
-                    if clean_ip:
-                        unique_ips.add(clean_ip)
-                        file_ips_count += 1
+                    original_line = extract_original_line_info(line)
+                    
+                    if original_line:
+                        file_valid_lines += 1
+                        valid_lines_count += 1
+                        unique_lines.add(original_line)
             
-            print(f"  从此文件提取了 {file_ips_count} 个唯一IP")
+            print(f"  从此文件提取了 {file_valid_lines} 个有效行")
             
         except Exception as e:
             print(f"处理文件 {file_path} 时出错: {e}")
     
-    print(f"处理了 {total_lines_processed} 行，去重后得到 {len(unique_ips)} 个唯一IP地址")
+    print(f"处理了 {total_lines_processed} 行，去重后得到 {len(unique_lines)} 个唯一行")
     
-    if not unique_ips:
-        print("❌ 没有提取到任何有效的IP地址")
+    if not unique_lines:
+        print("❌ 没有提取到任何有效的行")
         # 显示一些原始数据来调试
         if files:
             sample_file = files[0]
-            print(f"样本文件 {os.path.basename(sample_file)} 的前5行:")
+            print(f"样本文件 {os.path.basename(sample_file)} 的前10行:")
             try:
                 with open(sample_file, 'r', encoding='utf-8') as f:
                     for i, line in enumerate(f):
-                        if i >= 5:
+                        if i >= 10:
                             break
                         print(f"  行 {i+1}: {repr(line)}")
             except Exception as e:
@@ -140,30 +126,28 @@ def merge_and_deduplicate_ips(target_date):
             # 写入文件头
             f.write(f"# 合并和去重后的非美国IP地址 - {output_date}\n")
             f.write(f"# 源数据日期: {target_date_clean}\n")
-            f.write(f"# 唯一IP总数: {len(unique_ips)}\n")
+            f.write(f"# 唯一行数: {len(unique_lines)}\n")
             f.write(f"# 源文件数量: {len(files)}\n")
-            f.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"# 格式: 完全保留原始格式 (IP:端口#注释)\n\n")
             
-            # 按数字顺序写入IP
-            sorted_ips = sorted(unique_ips, key=lambda ip: [int(part) for part in ip.split('.')])
-            for ip in sorted_ips:
-                f.write(ip + '\n')
+            # 按原始格式写入所有行（不排序，保持原始顺序的集合顺序）
+            for line in unique_lines:
+                f.write(line + '\n')
         
         # 验证文件是否成功创建
         if os.path.exists(merged_file):
             file_size = os.path.getsize(merged_file)
-            line_count = len(unique_ips) + 7  # IP数量 + 头信息行数
             
             print(f"✅ 成功生成合并文件: {merged_file}")
             print(f"📏 文件大小: {file_size} 字节")
-            print(f"🔢 包含 {len(unique_ips)} 个唯一IP")
-            print(f"📄 总行数: {line_count}")
+            print(f"🔢 包含 {len(unique_lines)} 个唯一行")
             
             # 显示文件预览
-            print("文件预览 (前5行):")
+            print("文件预览 (前10行):")
             with open(merged_file, 'r', encoding='utf-8') as f:
                 for i, line in enumerate(f):
-                    if i >= 5:
+                    if i >= 12:  # 显示头信息 + 前几个数据行
                         break
                     print(f"  {line.strip()}")
             
