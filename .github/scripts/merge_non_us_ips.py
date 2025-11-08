@@ -41,6 +41,7 @@ def get_files_by_date(target_date):
 def merge_and_deduplicate_ips(target_date):
     """
     合并指定日期的文件，并去重IP地址，完全保留原始格式
+    如果合并文件已存在，则采用追加模式
     合并成功后删除源文件
     """
     print(f"开始处理日期: {target_date}")
@@ -80,6 +81,28 @@ def merge_and_deduplicate_ips(target_date):
     total_lines_processed = 0
     valid_lines_count = 0
     
+    # 读取现有合并文件的内容（如果存在）
+    output_date = f"{target_date_clean[:4]}-{target_date_clean[4:6]}-{target_date_clean[6:8]}"
+    merged_file = os.path.join(merged_dir, f"merged_ips_{output_date}.txt")
+    
+    existing_lines = set()
+    file_exists = os.path.exists(merged_file)
+    
+    if file_exists:
+        print(f"📁 合并文件已存在: {os.path.basename(merged_file)}")
+        print("🔍 读取现有文件内容...")
+        try:
+            with open(merged_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.rstrip('\n\r')
+                    if line and not line.startswith('#'):  # 跳过空行和注释行
+                        existing_lines.add(line)
+            print(f"  从现有文件中读取了 {len(existing_lines)} 个有效行")
+        except Exception as e:
+            print(f"❌ 读取现有合并文件时出错: {e}")
+            return False
+    
+    # 处理所有源文件
     for file_path in files:
         try:
             print(f"处理文件: {os.path.basename(file_path)}")
@@ -100,60 +123,92 @@ def merge_and_deduplicate_ips(target_date):
         except Exception as e:
             print(f"处理文件 {file_path} 时出错: {e}")
     
-    print(f"处理了 {total_lines_processed} 行，去重后得到 {len(unique_lines)} 个唯一行")
+    print(f"处理了 {total_lines_processed} 行，从源文件中得到 {len(unique_lines)} 个唯一行")
     
-    if not unique_lines:
-        print("❌ 没有提取到任何有效的行")
-        # 显示一些原始数据来调试
-        if files:
-            sample_file = files[0]
-            print(f"样本文件 {os.path.basename(sample_file)} 的前10行:")
-            try:
-                with open(sample_file, 'r', encoding='utf-8') as f:
-                    for i, line in enumerate(f):
-                        if i >= 10:
-                            break
-                        print(f"  {i+1}: {repr(line)}")
-            except Exception as e:
-                print(f"读取样本文件失败: {e}")
+    # 合并现有内容和新增内容
+    if file_exists:
+        combined_lines = existing_lines.union(unique_lines)
+        new_lines_count = len(combined_lines) - len(existing_lines)
+        print(f"📊 合并统计:")
+        print(f"  - 现有文件行数: {len(existing_lines)}")
+        print(f"  - 新增源文件行数: {len(unique_lines)}")
+        print(f"  - 合并后总行数: {len(combined_lines)}")
+        print(f"  - 新增唯一行数: {new_lines_count}")
+        
+        if new_lines_count == 0:
+            print("ℹ️ 没有新增的唯一行，跳过文件更新")
+            # 虽然没有新增内容，但仍然删除源文件
+            print(f"\n🗑️ 开始删除已处理的源文件...")
+            deleted_count = 0
+            for file_path in files:
+                try:
+                    os.remove(file_path)
+                    print(f"  已删除: {os.path.basename(file_path)}")
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"  删除失败 {os.path.basename(file_path)}: {e}")
+            
+            print(f"✅ 已删除 {deleted_count}/{len(files)} 个源文件")
+            return True
+    else:
+        combined_lines = unique_lines
+        new_lines_count = len(combined_lines)
+        print(f"🆕 创建新合并文件，包含 {new_lines_count} 个唯一行")
+    
+    if not combined_lines:
+        print("❌ 没有有效的行可以写入")
         return False
     
     # 写入合并后的文件
-    output_date = f"{target_date_clean[:4]}-{target_date_clean[4:6]}-{target_date_clean[6:8]}"
-    merged_file = os.path.join(merged_dir, f"merged_ips_{output_date}.txt")
-    
     try:
-        with open(merged_file, 'w', encoding='utf-8') as f:
-            # 写入文件头
-            f.write(f"# 合并和去重后的非美国IP地址 - {output_date}\n")
-            f.write(f"# 源数据日期: {target_date_clean}\n")
-            f.write(f"# 唯一行数: {len(unique_lines)}\n")
-            f.write(f"# 源文件数量: {len(files)}\n")
-            f.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"# 格式: 完全保留原始格式 (IP:端口#注释)\n\n")
+        mode = 'a' if file_exists else 'w'  # 追加模式或写入模式
+        with open(merged_file, mode, encoding='utf-8') as f:
+            if not file_exists:
+                # 新文件：写入完整的文件头
+                f.write(f"# 合并和去重后的非美国IP地址 - {output_date}\n")
+                f.write(f"# 源数据日期: {target_date_clean}\n")
+                f.write(f"# 唯一行数: {len(combined_lines)}\n")
+                f.write(f"# 源文件数量: {len(files)}\n")
+                f.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"# 格式: 完全保留原始格式 (IP:端口#注释)\n\n")
+            else:
+                # 追加模式：写入追加标记和新内容
+                f.write(f"\n# 追加内容 - 处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"# 新增源文件: {len(files)} 个\n")
+                f.write(f"# 新增唯一行: {new_lines_count} 个\n")
+                f.write(f"# 当前总行数: {len(combined_lines)} 个\n\n")
             
-            # 按原始格式写入所有行（不排序，保持原始顺序的集合顺序）
-            for line in unique_lines:
-                f.write(line + '\n')
+            # 写入新的唯一行（排除已存在的行）
+            if file_exists:
+                new_unique_lines = unique_lines - existing_lines
+                for line in new_unique_lines:
+                    f.write(line + '\n')
+            else:
+                for line in combined_lines:
+                    f.write(line + '\n')
         
-        # 验证文件是否成功创建
+        # 验证文件是否成功创建/更新
         if os.path.exists(merged_file):
             file_size = os.path.getsize(merged_file)
             
-            print(f"✅ 成功生成合并文件: {merged_file}")
+            if file_exists:
+                print(f"✅ 成功更新合并文件: {merged_file}")
+            else:
+                print(f"✅ 成功创建合并文件: {merged_file}")
+            
             print(f"📏 文件大小: {file_size} 字节")
-            print(f"🔢 包含 {len(unique_lines)} 个唯一行")
+            print(f"🔢 总行数: {len(combined_lines)} 个唯一行")
             
             # 显示文件预览
-            print("文件预览 (前10行):")
+            print("文件预览 (最后10行):")
             with open(merged_file, 'r', encoding='utf-8') as f:
-                for i, line in enumerate(f):
-                    if i >= 12:  # 显示头信息 + 前几个数据行
-                        break
-                    print(f"  {line.strip()}")
+                lines = f.readlines()
+                start_index = max(0, len(lines) - 10)
+                for i in range(start_index, len(lines)):
+                    print(f"  {lines[i].strip()}")
             
             # 合并成功，删除源文件
-            print(f"\n🗑️ 开始删除已合并的源文件...")
+            print(f"\n🗑️ 开始删除已处理的源文件...")
             deleted_count = 0
             for file_path in files:
                 try:
@@ -167,7 +222,7 @@ def merge_and_deduplicate_ips(target_date):
             
             return True
         else:
-            print(f"❌ 文件生成失败: {merged_file} 不存在")
+            print(f"❌ 文件操作失败: {merged_file} 不存在")
             return False
             
     except Exception as e:
