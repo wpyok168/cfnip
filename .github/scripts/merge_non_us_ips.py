@@ -41,6 +41,7 @@ def get_files_by_date(target_date):
 def merge_and_deduplicate_ips(target_date):
     """
     合并指定日期的文件，并去重IP地址，完全保留原始格式
+    合并成功后删除源文件
     """
     print(f"开始处理日期: {target_date}")
     
@@ -112,7 +113,7 @@ def merge_and_deduplicate_ips(target_date):
                     for i, line in enumerate(f):
                         if i >= 10:
                             break
-                        print(f"  行 {i+1}: {repr(line)}")
+                        print(f"  {i+1}: {repr(line)}")
             except Exception as e:
                 print(f"读取样本文件失败: {e}")
         return False
@@ -151,6 +152,19 @@ def merge_and_deduplicate_ips(target_date):
                         break
                     print(f"  {line.strip()}")
             
+            # 合并成功，删除源文件
+            print(f"\n🗑️ 开始删除已合并的源文件...")
+            deleted_count = 0
+            for file_path in files:
+                try:
+                    os.remove(file_path)
+                    print(f"  已删除: {os.path.basename(file_path)}")
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"  删除失败 {os.path.basename(file_path)}: {e}")
+            
+            print(f"✅ 已删除 {deleted_count}/{len(files)} 个源文件")
+            
             return True
         else:
             print(f"❌ 文件生成失败: {merged_file} 不存在")
@@ -177,10 +191,10 @@ def main():
     success = merge_and_deduplicate_ips(target_date)
     
     if success:
-        print("🎉 合并去重成功完成")
+        print("🎉 合并去重成功完成，源文件已删除")
         sys.exit(0)
     else:
-        print("💥 合并去重失败")
+        print("💥 合并去重失败，保留源文件")
         sys.exit(1)
 
 if __name__ == "__main__":
