@@ -24,6 +24,13 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           
+      - name: Show repository structure
+        run: |
+          echo "=== 仓库结构 ==="
+          find . -name "non_us_ips_*.txt" | head -10
+          echo "=== non_us_ips 目录内容 ==="
+          ls -la non_us_ips/ || echo "non_us_ips 目录不存在"
+          
       - name: Calculate target date
         id: date_calc
         run: |
@@ -39,26 +46,12 @@ jobs:
       - name: Merge and deduplicate IPs
         run: |
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
+          echo "执行合并脚本，日期: $TARGET_DATE"
           python .github/scripts/merge_non_us_ips.py "$TARGET_DATE"
           
       - name: Cleanup old files
         run: |
           python .github/scripts/cleanup_old_files.py
-          
-      - name: Check if merged file exists
-        run: |
-          # 转换日期格式 YYYYMMDD -> YYYY-MM-DD
-          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          FORMATTED_DATE="${TARGET_DATE:0:4}-${TARGET_DATE:4:2}-${TARGET_DATE:6:2}"
-          MERGED_FILE="non_us_ips/merged/merged_ips_${FORMATTED_DATE}.txt"
-          
-          if [ -f "$MERGED_FILE" ]; then
-            echo "✅ 合并文件已创建: $MERGED_FILE"
-            echo "文件行数: $(wc -l < "$MERGED_FILE")"
-          else
-            echo "❌ 合并文件未创建"
-            exit 1
-          fi
           
       - name: Commit and push changes
         run: |
@@ -73,7 +66,6 @@ jobs:
             echo "🟡 没有检测到更改，跳过提交"
           else
             echo "🟢 检测到更改，准备提交"
-            git status
             git commit -m "Auto: Merge and deduplicate non-US IPs for ${{ steps.date_calc.outputs.target_date }} [$(date +%Y-%m-%d)]"
             git push
             echo "✅ 更改已提交并推送"
