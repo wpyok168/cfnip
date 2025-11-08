@@ -88,7 +88,7 @@ jobs:
           echo "🕸️ Starting non-US IP address collection..."
           start_time=$(date +%s)
           
-          # 创建增强版的 IP 收集脚本
+          # 创建 Python 脚本文件
           cat > collect_non_us_ips.py << 'EOF'
 import requests
 import ipaddress
@@ -97,148 +97,99 @@ from datetime import datetime
 import os
 import time
 
-class NonUSIPCollector:
-    def __init__(self):
-        self.output_dir = 'non-us-ips'
-        self.timestamp = datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S_UTC')
-        
-    def is_non_us_ip(self, ip):
-        """检查 IP 是否不属于美国"""
+def is_non_us_ip(ip):
+    """检查 IP 是否不属于美国"""
+    try:
+        response = requests.get(f'http://ip-api.com/json/{ip}?fields=countryCode,status', timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') == 'success':
+                return data.get('countryCode') != 'US'
+        time.sleep(0.1)
+    except Exception as e:
+        print(f"Error checking IP {ip}: {e}")
+    return False
+
+def collect_ips():
+    """收集 IP 地址的主函数"""
+    timestamp = datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S_UTC')
+    output_dir = 'non-us-ips'
+    
+    ipv4_list = []
+    ipv6_list = []
+    
+    # IP 来源列表
+    sources = [
+        'https://www.cloudflare.com/ips-v4',
+        'https://www.cloudflare.com/ips-v6',
+    ]
+    
+    for source in sources:
         try:
-            response = requests.get(
-                f'http://ip-api.com/json/{ip}?fields=countryCode,status', 
-                timeout=5
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('status') == 'success':
-                    return data.get('countryCode') != 'US'
-            time.sleep(0.1)
-        except Exception as e:
-            print(f"Error checking IP {ip}: {e}")
-        return False
-    
-    def get_ip_sources(self):
-        """返回 IP 地址来源列表"""
-        return [
-            'https://www.cloudflare.com/ips-v4',
-            'https://www.cloudflare.com/ips-v6',
-        ]
-    
-    def collect_ips_from_source(self, url):
-        """从单个来源收集 IP"""
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                return [line.strip() for line in response.text.splitlines() 
-                       if line.strip() and not line.startswith('#')]
-        except Exception as e:
-            print(f"Error fetching from {url}: {e}")
-        return []
-    
-    def filter_non_us_ips(self, ip_list, ip_type="IPv4"):
-        """过滤非美国 IP"""
-        if not ip_list:
-            return []
-            
-        non_us_ips = []
-        sample_size = min(3, len(ip_list))
-        
-        print(f"🔍 Checking {sample_size} {ip_type} samples for US location...")
-        
-        for ip in ip_list[:sample_size]:
-            test_ip = ip.split('/')[0] if '/' in ip else ip
-            if self.is_non_us_ip(test_ip):
-                print(f"   ✅ {test_ip} is non-US, including all IPs from this source")
-                return ip_list
-            else:
-                print(f"   ❌ {test_ip} is US, skipping this source")
-                break
-                
-        return []
-    
-    def save_files(self, ipv4_list, ipv6_list):
-        """保存文件到相应目录"""
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # 主文件
-        with open('ip.txt', 'w') as f:
-            f.write('\n'.join(ipv4_list))
-        
-        with open('ipv6.txt', 'w') as f:
-            f.write('\n'.join(ipv6_list))
-        
-        # 时间戳文件
-        ipv4_filename = f'{self.output_dir}/ipv4_non_us_{self.timestamp}.txt'
-        ipv6_filename = f'{self.output_dir}/ipv6_non_us_{self.timestamp}.txt'
-        
-        with open(ipv4_filename, 'w') as f:
-            f.write(f'# Non-US IPv4 addresses\n')
-            f.write(f'# Collected: {self.timestamp}\n')
-            f.write(f'# Total: {len(ipv4_list)} addresses\n\n')
-            f.write('\n'.join(ipv4_list))
-        
-        with open(ipv6_filename, 'w') as f:
-            f.write(f'# Non-US IPv6 addresses\n')
-            f.write(f'# Collected: {self.timestamp}\n')
-            f.write(f'# Total: {len(ipv6_list)} addresses\n\n')
-            f.write('\n'.join(ipv6_list))
-        
-        # 元数据
-        metadata = {
-            'collection_time': self.timestamp,
-            'ipv4_count': len(ipv4_list),
-            'ipv6_count': len(ipv6_list),
-            'output_directory': self.output_dir
-        }
-        
-        with open(f'{self.output_dir}/metadata_{self.timestamp}.json', 'w') as f:
-            json.dump(metadata, f, indent=2)
-        
-        return ipv4_filename, ipv6_filename
-    
-    def run(self):
-        """主执行函数"""
-        print(f"🚀 Starting non-US IP collection at {self.timestamp}")
-        
-        ipv4_list = []
-        ipv6_list = []
-        
-        for source in self.get_ip_sources():
             print(f"📡 Fetching from: {source}")
-            ips = self.collect_ips_from_source(source)
-            
-            for ip in ips:
-                try:
-                    network = ipaddress.ip_network(ip, strict=False)
-                    if network.version == 4:
-                        ipv4_list.append(ip)
-                    else:
-                        ipv6_list.append(ip)
-                except:
-                    continue
-        
-        # 过滤非美国 IP
-        print("🔍 Filtering non-US IP addresses...")
-        filtered_ipv4 = self.filter_non_us_ips(ipv4_list, "IPv4")
-        filtered_ipv6 = self.filter_non_us_ips(ipv6_list, "IPv6")
-        
-        # 保存文件
-        ipv4_file, ipv6_file = self.save_files(filtered_ipv4, filtered_ipv6)
-        
-        print(f"✅ Collection completed!")
-        print(f"📊 IPv4 addresses: {len(filtered_ipv4)}")
-        print(f"📊 IPv6 addresses: {len(filtered_ipv6)}")
-        print(f"📁 Files saved:")
-        print(f"   - {ipv4_file}")
-        print(f"   - {ipv6_file}")
-        print(f"   - {self.output_dir}/metadata_{self.timestamp}.json")
+            response = requests.get(source, timeout=10)
+            if response.status_code == 200:
+                for line in response.text.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        try:
+                            network = ipaddress.ip_network(line, strict=False)
+                            # 抽样检查地理位置
+                            sample_ip = str(list(network.hosts())[0]) if network.num_addresses > 1 else str(network.network_address)
+                            if is_non_us_ip(sample_ip):
+                                if network.version == 4:
+                                    ipv4_list.append(line)
+                                else:
+                                    ipv6_list.append(line)
+                        except Exception as e:
+                            continue
+        except Exception as e:
+            print(f"Error processing {source}: {e}")
+    
+    # 保存到文件
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 主文件
+    with open('ip.txt', 'w') as f:
+        f.write('\n'.join(ipv4_list))
+    
+    with open('ipv6.txt', 'w') as f:
+        f.write('\n'.join(ipv6_list))
+    
+    # 时间戳文件
+    ipv4_filename = f'{output_dir}/ipv4_non_us_{timestamp}.txt'
+    ipv6_filename = f'{output_dir}/ipv6_non_us_{timestamp}.txt'
+    
+    with open(ipv4_filename, 'w') as f:
+        f.write(f'# Non-US IPv4 addresses collected at {timestamp}\n')
+        f.write(f'# Total: {len(ipv4_list)} addresses\n')
+        f.write('\n'.join(ipv4_list))
+    
+    with open(ipv6_filename, 'w') as f:
+        f.write(f'# Non-US IPv6 addresses collected at {timestamp}\n')
+        f.write(f'# Total: {len(ipv6_list)} addresses\n')
+        f.write('\n'.join(ipv6_list))
+    
+    # 保存元数据
+    metadata = {
+        'timestamp': timestamp,
+        'ipv4_count': len(ipv4_list),
+        'ipv6_count': len(ipv6_list),
+        'sources': sources
+    }
+    
+    with open(f'{output_dir}/metadata_{timestamp}.json', 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"✅ Collected {len(ipv4_list)} non-US IPv4 addresses")
+    print(f"✅ Collected {len(ipv6_list)} non-US IPv6 addresses")
+    print(f"📁 Files saved in: {output_dir}/")
 
 if __name__ == '__main__':
-    collector = NonUSIPCollector()
-    collector.run()
+    collect_ips()
 EOF
 
+          # 运行 Python 脚本
           if python collect_non_us_ips.py; then
             end_time=$(date +%s)
             duration=$((end_time - start_time))
@@ -282,7 +233,6 @@ EOF
           
           ipv4_file="${output_dir}/ipv4_non_us_${timestamp}.txt"
           ipv6_file="${output_dir}/ipv6_non_us_${timestamp}.txt"
-          metadata_file="${output_dir}/metadata_${timestamp}.json"
           
           if [ -f "$ipv4_file" ] && [ -f "$ipv6_file" ]; then
             echo "✅ Time-stamped files created successfully"
@@ -325,7 +275,7 @@ EOF
           commit_message: "chore: update non-US IP addresses [auto]"
           commit_user_name: 'GitHub Actions Bot'
           commit_user_email: 'actions@users.noreply.github.com'
-          file_pattern: 'ip.txt ipv6.txt ${{ env.OUTPUT_DIR }}/*'
+          file_pattern: 'ip.txt ipv6.txt non-us-ips/*'
           skip_fetch: true
           skip_checkout: true
 
