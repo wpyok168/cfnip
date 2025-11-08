@@ -2,13 +2,25 @@ name: 🌐 收集IP地址并保存到文件
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # 每小时的30分钟运行一次（UTC时间）
+    - cron: '30 * * * *'   # 主要调度：每小时的30分钟运行
+    - cron: '0 * * * *'    # 备用调度：每小时的0分钟运行（整点）
   workflow_dispatch:        # 允许手动触发
     inputs:
       reason:
         description: '手动触发原因'
         required: false
         default: '手动执行'
+  push:                    # 代码推送时触发（备用）
+    branches: [ main, master ]
+    paths:
+      - '.github/workflows/**'
+      - 'autoip6.py'
+      - 'scripts/**'
+  pull_request:            # PR时触发（测试用）
+    branches: [ main, master ]
+    paths:
+      - '.github/workflows/**'
+      - 'autoip6.py'
 
 env:
   PYTHON_VERSION: '3.x'
@@ -26,15 +38,38 @@ jobs:
     outputs:
       timestamp: ${{ steps.timestamp.outputs.time }}
       files_changed: ${{ steps.changes-check.outputs.has_changes }}
+      trigger_type: ${{ steps.debug.outputs.trigger_type }}
     
     steps:
-      # ========== 初始化 ==========
-      - name: ⏰ 开始工作流
+      # ========== 调试信息 ==========
+      - name: 🔍 调试触发信息
+        id: debug
         run: |
           echo "🎯 工作流触发方式: ${{ github.event_name }}"
           echo "📅 当前时间: $(date)"
+          echo "🕐 UTC时间: $(date -u)"
           echo "🔍 仓库: ${{ github.repository }}"
           echo "🌿 分支: ${{ github.ref }}"
+          echo "👤 触发者: ${{ github.actor }}"
+          
+          # 设置触发类型输出
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            echo "触发类型: 定时调度"
+            echo "trigger_type=scheduled" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "触发类型: 手动执行"
+            echo "原因: ${{ github.event.inputs.reason }}"
+            echo "trigger_type=manual" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            echo "触发类型: 代码推送"
+            echo "trigger_type=push" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "触发类型: 拉取请求"
+            echo "trigger_type=pull_request" >> $GITHUB_OUTPUT
+          else
+            echo "触发类型: 其他 (${{ github.event_name }})"
+            echo "trigger_type=other" >> $GITHUB_OUTPUT
+          fi
 
       - name: 📝 生成时间戳
         id: timestamp
@@ -54,6 +89,7 @@ jobs:
         with:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref }}
 
       # ========== Python环境 ==========
       - name: 🐍 设置Python ${{ env.PYTHON_VERSION }}
@@ -73,6 +109,7 @@ jobs:
         id: ip-collection
         run: |
           echo "🕸️ 开始收集IP地址..."
+          echo "📋 触发类型: ${{ steps.debug.outputs.trigger_type }}"
           start_time=$(date +%s)
           
           if python autoip6.py; then
@@ -152,11 +189,11 @@ jobs:
           commit_message: |
             chore: 更新IP地址 [自动]
             
+            • 触发类型: ${{ steps.debug.outputs.trigger_type }}
             • 更新 ip.txt: ${{ steps.file-check.outputs.ip_count }} 个IPv4地址
             • 更新 ipv6.txt: ${{ steps.file-check.outputs.ipv6_count }} 个IPv6地址
-            • 新增非美国区域IP文件
             • 时间戳: ${{ steps.timestamp.outputs.time }}
-            • 触发方式: ${{ github.event_name }}
+            • 工作流: ${{ github.workflow }}
           commit_user_name: '🤖 GitHub Actions 机器人'
           commit_user_email: 'actions@users.noreply.github.com'
           commit_options: '--signoff'
@@ -172,8 +209,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📊 执行详情" >> $GITHUB_STEP_SUMMARY
           echo "- **触发方式:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **触发类型:** ${{ steps.debug.outputs.trigger_type }}" >> $GITHUB_STEP_SUMMARY
           echo "- **执行时间:** ${{ steps.timestamp.outputs.time }}" >> $GITHUB_STEP_SUMMARY
           echo "- **仓库:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **分支:** ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           echo "### 📁 文件状态" >> $GITHUB_STEP_SUMMARY
@@ -209,6 +248,7 @@ jobs:
           echo "🎉 成功更新IP地址！"
           echo "📊 IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址"
           echo "📊 IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址"
+          echo "🔧 触发类型: ${{ steps.debug.outputs.trigger_type }}"
           if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
             echo "🌍 非美国区域IP: ${{ steps.file-check.outputs.non_us_files }} 个文件已保存"
           fi
@@ -219,6 +259,7 @@ jobs:
           echo "ℹ️ IP地址已是最新版本。"
           echo "📊 当前IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址"
           echo "📊 当前IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址"
+          echo "🔧 触发类型: ${{ steps.debug.outputs.trigger_type }}"
           if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
             echo "📁 非美国区域IP文件: ${{ steps.file-check.outputs.non_us_files }} 个"
           fi
