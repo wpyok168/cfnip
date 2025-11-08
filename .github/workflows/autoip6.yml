@@ -16,11 +16,6 @@ on:
       - '.github/workflows/**'
       - 'autoip6.py'
       - 'scripts/**'
-  pull_request:            # PR时触发（测试用）
-    branches: [ main, master ]
-    paths:
-      - '.github/workflows/**'
-      - 'autoip6.py'
 
 # ========== 权限配置 ==========
 permissions:
@@ -37,12 +32,6 @@ jobs:
   collect-ip-addresses:
     name: 🚀 收集IP地址
     runs-on: ubuntu-latest
-    
-    # 作业级权限（覆盖全局权限）
-    permissions:
-      contents: write
-      actions: write
-      checks: write
     
     outputs:
       timestamp: ${{ steps.timestamp.outputs.time }}
@@ -88,10 +77,10 @@ jobs:
       - name: 🔐 检查权限
         run: |
           echo "🔍 权限调试信息:"
-          echo "• 全局权限: ${{ toJson(permissions) }}"
           echo "• 触发事件: ${{ github.event_name }}"
           echo "• 仓库: ${{ github.repository }}"
           echo "• 执行者: ${{ github.actor }}"
+          echo "• 工作流: ${{ github.workflow }}"
           
           # 测试写入权限
           if touch test-permission.txt && echo "权限测试" > test-permission.txt; then
@@ -99,6 +88,14 @@ jobs:
             rm test-permission.txt
           else
             echo "❌ 文件写入权限: 失败"
+            exit 1
+          fi
+          
+          # 测试目录创建权限
+          if mkdir -p test_dir && rmdir test_dir; then
+            echo "✅ 目录操作权限: 正常"
+          else
+            echo "❌ 目录操作权限: 失败"
             exit 1
           fi
 
