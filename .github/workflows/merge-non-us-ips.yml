@@ -2,7 +2,6 @@ name: Merge Non-US IPs
 
 on:
   schedule:
-    # 北京时间每天凌晨1点运行 (UTC+8)
     - cron: '0 17 * * *'
   workflow_dispatch:
     inputs:
@@ -19,69 +18,40 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
-      - name: Calculate target date (Fixed)
+          
+      - name: Calculate target date
         id: date_calc
         run: |
-          # 设置时区为北京时间
           export TZ='Asia/Shanghai'
-          
           if [ -n "${{ github.event.inputs.date_override }}" ]; then
             TARGET_DATE="${{ github.event.inputs.date_override }}"
-            echo "使用手动指定的日期: $TARGET_DATE"
           else
-            # 修复：获取前天的日期（基于北京时间）
-            # 使用更可靠的方法计算前天
             TARGET_DATE=$(date -d "yesterday -1 day" +%Y-%m-%d)
-            echo "使用自动计算的前天日期: $TARGET_DATE"
           fi
-          
-          echo "当前北京时间: $(date)"
-          echo "目标处理日期: $TARGET_DATE"
           echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
           
       - name: Check target directory
         run: |
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          echo "检查目标目录: non_us_ips/$TARGET_DATE"
-          
           if [ -d "non_us_ips/$TARGET_DATE" ]; then
             echo "✅ 目标目录存在"
-            echo "目录内容:"
-            ls -la "non_us_ips/$TARGET_DATE/"
-            echo "文件数量: $(find "non_us_ips/$TARGET_DATE" -name "*.txt" | wc -l)"
           else
-            echo "❌ 目标目录不存在: non_us_ips/$TARGET_DATE"
-            echo "可用的日期目录:"
-            find non_us_ips -maxdepth 1 -type d -name "202*" | sort || echo "未找到日期目录"
-            echo "创建测试目录结构..."
-            mkdir -p "non_us_ips/$TARGET_DATE"
-            echo "192.168.1.1" > "non_us_ips/$TARGET_DATE/test1.txt"
-            echo "192.168.1.2" > "non_us_ips/$TARGET_DATE/test2.txt"
-            echo "已创建测试文件"
+            echo "❌ 目标目录不存在"
+            find non_us_ips -maxdepth 1 -type d -name "202*" | sort
+            exit 1
           fi
           
-      - name: Merge files from target date
+      - name: Merge files
         run: |
-          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          echo "开始合并日期: $TARGET_DATE"
-          python .github/scripts/merge_non_us_ips.py "$TARGET_DATE"
+          python .github/scripts/merge_non_us_ips.py "${{ steps.date_calc.outputs.target_date }}"
           
       - name: Cleanup old files
         run: |
           python .github/scripts/cleanup_old_files.py
           
-      - name: Commit and push changes
+      - name: Show generated files
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          # 检查是否有文件需要提交
-          if git status --porcelain | grep -q .; then
-            git add .
-            git commit -m "Auto: Merge non-US IPs and cleanup [$(date +%Y-%m-%d)]"
-            git push
-            echo "更改已提交"
-          else
-            echo "没有需要提交的更改"
-          fi
+          echo "=== 生成的文件 ==="
+          find non_us_ips/merged -name "*.txt" -mmin -5 | head -10 || echo "没有新生成的文件"
+          echo "=== 清理的文件 ==="
+          echo "清理操作已完成"
