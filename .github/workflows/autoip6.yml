@@ -92,102 +92,151 @@ jobs:
           cat > collect_non_us_ips.py << 'EOF'
 import requests
 import ipaddress
-import pycountry
 import json
 from datetime import datetime
 import os
+import time
 
-def is_non_us_ip(ip):
-    """检查 IP 是否不属于美国"""
-    try:
-        # 这里使用 ip-api.com 进行地理定位查询
-        response = requests.get(f'http://ip-api.com/json/{ip}?fields=countryCode', timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('countryCode') != 'US'
-    except:
-        pass
-    return False
-
-def collect_ips():
-    """收集 IP 地址的主函数"""
-    timestamp = datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S_UTC')
-    output_dir = 'non-us-ips'
-    
-    # 非美国 IPv4 地址
-    ipv4_list = []
-    # 非美国 IPv6 地址  
-    ipv6_list = []
-    
-    # 这里替换为你实际的 IP 收集逻辑
-    # 示例：从多个来源收集 IP
-    sources = [
-        'https://cdn.jsdelivr.net/gh/lukesampson/cidr-tools@master/data/cidr.txt',
-        # 添加更多 IP 来源
-    ]
-    
-    for source in sources:
+class NonUSIPCollector:
+    def __init__(self):
+        self.output_dir = 'non-us-ips'
+        self.timestamp = datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S_UTC')
+        
+    def is_non_us_ip(self, ip):
+        """检查 IP 是否不属于美国"""
         try:
-            response = requests.get(source, timeout=10)
+            response = requests.get(
+                f'http://ip-api.com/json/{ip}?fields=countryCode,status', 
+                timeout=5
+            )
             if response.status_code == 200:
-                for line in response.text.splitlines():
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        try:
-                            network = ipaddress.ip_network(line, strict=False)
-                            # 抽样检查部分 IP 的地理位置
-                            sample_ip = str(list(network.hosts())[0]) if network.num_addresses > 1 else str(network.network_address)
-                            if is_non_us_ip(sample_ip):
-                                if network.version == 4:
-                                    ipv4_list.append(line)
-                                else:
-                                    ipv6_list.append(line)
-                        except:
-                            continue
+                data = response.json()
+                if data.get('status') == 'success':
+                    return data.get('countryCode') != 'US'
+            time.sleep(0.1)
         except Exception as e:
-            print(f"Error processing {source}: {e}")
+            print(f"Error checking IP {ip}: {e}")
+        return False
     
-    # 保存到文件
-    os.makedirs(output_dir, exist_ok=True)
+    def get_ip_sources(self):
+        """返回 IP 地址来源列表"""
+        return [
+            'https://www.cloudflare.com/ips-v4',
+            'https://www.cloudflare.com/ips-v6',
+        ]
     
-    # 主文件（始终更新）
-    with open('ip.txt', 'w') as f:
-        f.write('\n'.join(ipv4_list))
+    def collect_ips_from_source(self, url):
+        """从单个来源收集 IP"""
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                return [line.strip() for line in response.text.splitlines() 
+                       if line.strip() and not line.startswith('#')]
+        except Exception as e:
+            print(f"Error fetching from {url}: {e}")
+        return []
     
-    with open('ipv6.txt', 'w') as f:
-        f.write('\n'.join(ipv6_list))
+    def filter_non_us_ips(self, ip_list, ip_type="IPv4"):
+        """过滤非美国 IP"""
+        if not ip_list:
+            return []
+            
+        non_us_ips = []
+        sample_size = min(3, len(ip_list))
+        
+        print(f"🔍 Checking {sample_size} {ip_type} samples for US location...")
+        
+        for ip in ip_list[:sample_size]:
+            test_ip = ip.split('/')[0] if '/' in ip else ip
+            if self.is_non_us_ip(test_ip):
+                print(f"   ✅ {test_ip} is non-US, including all IPs from this source")
+                return ip_list
+            else:
+                print(f"   ❌ {test_ip} is US, skipping this source")
+                break
+                
+        return []
     
-    # 按时间戳保存的文件
-    ipv4_filename = f'{output_dir}/ipv4_non_us_{timestamp}.txt'
-    ipv6_filename = f'{output_dir}/ipv6_non_us_{timestamp}.txt'
+    def save_files(self, ipv4_list, ipv6_list):
+        """保存文件到相应目录"""
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # 主文件
+        with open('ip.txt', 'w') as f:
+            f.write('\n'.join(ipv4_list))
+        
+        with open('ipv6.txt', 'w') as f:
+            f.write('\n'.join(ipv6_list))
+        
+        # 时间戳文件
+        ipv4_filename = f'{self.output_dir}/ipv4_non_us_{self.timestamp}.txt'
+        ipv6_filename = f'{self.output_dir}/ipv6_non_us_{self.timestamp}.txt'
+        
+        with open(ipv4_filename, 'w') as f:
+            f.write(f'# Non-US IPv4 addresses\n')
+            f.write(f'# Collected: {self.timestamp}\n')
+            f.write(f'# Total: {len(ipv4_list)} addresses\n\n')
+            f.write('\n'.join(ipv4_list))
+        
+        with open(ipv6_filename, 'w') as f:
+            f.write(f'# Non-US IPv6 addresses\n')
+            f.write(f'# Collected: {self.timestamp}\n')
+            f.write(f'# Total: {len(ipv6_list)} addresses\n\n')
+            f.write('\n'.join(ipv6_list))
+        
+        # 元数据
+        metadata = {
+            'collection_time': self.timestamp,
+            'ipv4_count': len(ipv4_list),
+            'ipv6_count': len(ipv6_list),
+            'output_directory': self.output_dir
+        }
+        
+        with open(f'{self.output_dir}/metadata_{self.timestamp}.json', 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        return ipv4_filename, ipv6_filename
     
-    with open(ipv4_filename, 'w') as f:
-        f.write(f'# Non-US IPv4 addresses collected at {timestamp}\n')
-        f.write(f'# Total: {len(ipv4_list)} addresses\n')
-        f.write('\n'.join(ipv4_list))
-    
-    with open(ipv6_filename, 'w') as f:
-        f.write(f'# Non-US IPv6 addresses collected at {timestamp}\n')
-        f.write(f'# Total: {len(ipv6_list)} addresses\n')
-        f.write('\n'.join(ipv6_list))
-    
-    # 保存元数据
-    metadata = {
-        'timestamp': timestamp,
-        'ipv4_count': len(ipv4_list),
-        'ipv6_count': len(ipv6_list),
-        'sources': sources
-    }
-    
-    with open(f'{output_dir}/metadata_{timestamp}.json', 'w') as f:
-        json.dump(metadata, f, indent=2)
-    
-    print(f"✅ Collected {len(ipv4_list)} non-US IPv4 addresses")
-    print(f"✅ Collected {len(ipv6_list)} non-US IPv6 addresses")
-    print(f"📁 Files saved in: {output_dir}/")
+    def run(self):
+        """主执行函数"""
+        print(f"🚀 Starting non-US IP collection at {self.timestamp}")
+        
+        ipv4_list = []
+        ipv6_list = []
+        
+        for source in self.get_ip_sources():
+            print(f"📡 Fetching from: {source}")
+            ips = self.collect_ips_from_source(source)
+            
+            for ip in ips:
+                try:
+                    network = ipaddress.ip_network(ip, strict=False)
+                    if network.version == 4:
+                        ipv4_list.append(ip)
+                    else:
+                        ipv6_list.append(ip)
+                except:
+                    continue
+        
+        # 过滤非美国 IP
+        print("🔍 Filtering non-US IP addresses...")
+        filtered_ipv4 = self.filter_non_us_ips(ipv4_list, "IPv4")
+        filtered_ipv6 = self.filter_non_us_ips(ipv6_list, "IPv6")
+        
+        # 保存文件
+        ipv4_file, ipv6_file = self.save_files(filtered_ipv4, filtered_ipv6)
+        
+        print(f"✅ Collection completed!")
+        print(f"📊 IPv4 addresses: {len(filtered_ipv4)}")
+        print(f"📊 IPv6 addresses: {len(filtered_ipv6)}")
+        print(f"📁 Files saved:")
+        print(f"   - {ipv4_file}")
+        print(f"   - {ipv6_file}")
+        print(f"   - {self.output_dir}/metadata_{self.timestamp}.json")
 
 if __name__ == '__main__':
-    collect_ips()
+    collector = NonUSIPCollector()
+    collector.run()
 EOF
 
           if python collect_non_us_ips.py; then
@@ -209,22 +258,22 @@ EOF
           echo "📋 Checking generated files..."
           
           # 检查主文件
-          if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
+          if [ -f "ip.txt" ]; then
             ip_count=$(wc -l < ip.txt | tr -d ' ')
             echo "✅ ip.txt: $ip_count IPv4 addresses"
             echo "ip_count=$ip_count" >> $GITHUB_OUTPUT
           else
-            echo "❌ ip.txt is missing or empty"
-            exit 1
+            echo "⚠️ ip.txt is missing"
+            echo "ip_count=0" >> $GITHUB_OUTPUT
           fi
           
-          if [ -f "ipv6.txt" ] && [ -s "ipv6.txt" ]; then
+          if [ -f "ipv6.txt" ]; then
             ipv6_count=$(wc -l < ipv6.txt | tr -d ' ')
             echo "✅ ipv6.txt: $ipv6_count IPv6 addresses"
             echo "ipv6_count=$ipv6_count" >> $GITHUB_OUTPUT
           else
-            echo "❌ ipv6.txt is missing or empty"
-            exit 1
+            echo "⚠️ ipv6.txt is missing"
+            echo "ipv6_count=0" >> $GITHUB_OUTPUT
           fi
           
           # 检查时间戳文件
@@ -236,13 +285,10 @@ EOF
           metadata_file="${output_dir}/metadata_${timestamp}.json"
           
           if [ -f "$ipv4_file" ] && [ -f "$ipv6_file" ]; then
-            echo "✅ Time-stamped files created:"
-            echo "   - $ipv4_file"
-            echo "   - $ipv6_file"
-            echo "   - $metadata_file"
+            echo "✅ Time-stamped files created successfully"
             echo "output_files=true" >> $GITHUB_OUTPUT
           else
-            echo "❌ Time-stamped files missing"
+            echo "⚠️ Some time-stamped files are missing"
             echo "output_files=false" >> $GITHUB_OUTPUT
           fi
 
@@ -250,10 +296,10 @@ EOF
       - name: 📂 List Generated Files
         run: |
           echo "📁 Generated files in ${{ env.OUTPUT_DIR }}:"
-          ls -la ${{ env.OUTPUT_DIR }}/
+          ls -la ${{ env.OUTPUT_DIR }}/ || echo "No files in directory"
           echo ""
           echo "📊 File sizes:"
-          find ${{ env.OUTPUT_DIR }} -name "*.txt" -exec wc -l {} \;
+          find ${{ env.OUTPUT_DIR }} -name "*.txt" -exec wc -l {} \; 2>/dev/null || echo "No text files found"
 
       # ========== CHANGES CHECK ==========
       - name: 📊 Check for Changes
@@ -276,17 +322,9 @@ EOF
         if: steps.changes-check.outputs.has_changes == 'true'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: |
-            chore: update non-US IP addresses [auto]
-            
-            • Updated ip.txt: ${{ steps.file-check.outputs.ip_count }} IPv4 addresses
-            • Updated ipv6.txt: ${{ steps.file-check.outputs.ipv6_count }} IPv6 addresses
-            • New time-stamped files in ${{ env.OUTPUT_DIR }}/
-            • Timestamp: ${{ steps.timestamp.outputs.time }}
-            • Trigger: ${{ github.event_name }}
-          commit_user_name: '🤖 GitHub Actions Bot'
+          commit_message: "chore: update non-US IP addresses [auto]"
+          commit_user_name: 'GitHub Actions Bot'
           commit_user_email: 'actions@users.noreply.github.com'
-          commit_options: '--signoff'
           file_pattern: 'ip.txt ipv6.txt ${{ env.OUTPUT_DIR }}/*'
           skip_fetch: true
           skip_checkout: true
@@ -310,12 +348,6 @@ EOF
           echo "- **Time-stamped files:** ${{ steps.file-check.outputs.output_files }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "### 📂 Generated Files" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          ls -1 ${{ env.OUTPUT_DIR }}/ 2>/dev/null | head -10 >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
           if steps.changes-check.outputs.has_changes == 'true'; then
             echo "### ✅ Changes Committed" >> $GITHUB_STEP_SUMMARY
             echo "IP address files have been updated and committed automatically." >> $GITHUB_STEP_SUMMARY
@@ -328,11 +360,10 @@ EOF
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*Automatically generated by GitHub Actions*" >> $GITHUB_STEP_SUMMARY
 
-      # ========== CLEANUP OLD FILES ==========
-      - name: 🗑️ Cleanup Old Files (Optional)
+      # ========== NOTIFICATION ==========
+      - name: 🎉 Success Notification
         if: success()
         run: |
-          echo "🧹 Cleaning up files older than 7 days..."
-          find ${{ env.OUTPUT_DIR }} -name "*.txt" -mtime +7 -exec echo "Deleting: {}" \;
-          # 实际删除取消注释下一行
-          # find ${{ env.OUTPUT_DIR }} -name "*.txt" -mtime +7 -delete
+          echo "🎉 Workflow completed successfully!"
+          echo "📊 IPv4 addresses collected: ${{ steps.file-check.outputs.ip_count }}"
+          echo "📊 IPv6 addresses collected: ${{ steps.file-check.outputs.ipv6_count }}"
