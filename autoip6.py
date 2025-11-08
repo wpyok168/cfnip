@@ -220,8 +220,8 @@ def query_ips_parallel(ip_set, max_workers=10):
         # 提交所有任务
         future_to_ip = {executor.submit(process_single_ip, ip): ip for ip in ip_set}
         
-        # 收集结果
-        for future in as_completed(future_to_url):
+        # 收集结果 - 修复这里的变量名错误
+        for future in as_completed(future_to_ip):  # 这里改为 future_to_ip
             try:
                 ip, location, success = future.result()
                 results.append((ip, location))
@@ -405,6 +405,10 @@ def main():
     if len(unique_ipv4) + len(unique_ipv6) < 10:
         print("\n⚠️  收集到的IP数量较少，使用备用方案...")
         create_sample_ips(output_dir)
+        ipv4_count = 7  # 示例IPv4数量
+        ipv6_count = 3  # 示例IPv6数量
+        non_us_ipv4_count = 3  # 示例非美国IPv4数量
+        non_us_ipv6_count = 0  # 示例非美国IPv6数量
     else:
         # 并行查询地理位置并保存结果
         if unique_ipv4:
@@ -426,9 +430,9 @@ def main():
         else:
             ipv6_count = 0
             non_us_ipv6_count = 0
-        
-        # 生成统计报告
-        generate_statistics(ipv4_count, ipv6_count, non_us_ipv4_count, non_us_ipv6_count, output_dir)
+    
+    # 生成统计报告
+    generate_statistics(ipv4_count, ipv6_count, non_us_ipv4_count, non_us_ipv6_count, output_dir)
     
     # 验证结果
     verify_results(output_dir)
