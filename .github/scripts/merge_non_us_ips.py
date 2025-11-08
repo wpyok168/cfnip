@@ -49,48 +49,6 @@ def get_files_by_date(target_date):
     
     return sorted(files)
 
-def debug_file_system():
-    """调试文件系统状态"""
-    print("=== 文件系统调试信息 ===")
-    
-    # 检查工作目录
-    print(f"当前工作目录: {os.getcwd()}")
-    
-    # 检查 non_us_ips 目录
-    base_dir = "non_us_ips"
-    if os.path.exists(base_dir):
-        print(f"✅ {base_dir} 目录存在")
-        print("目录内容:")
-        for root, dirs, files in os.walk(base_dir):
-            level = root.replace(base_dir, '').count(os.sep)
-            indent = ' ' * 2 * level
-            print(f'{indent}{os.path.basename(root)}/')
-            subindent = ' ' * 2 * (level + 1)
-            for file in files:
-                if file.endswith('.txt'):
-                    file_path = os.path.join(root, file)
-                    file_size = os.path.getsize(file_path)
-                    print(f'{subindent}{file} ({file_size} bytes)')
-    else:
-        print(f"❌ {base_dir} 目录不存在")
-        
-    # 检查 merged 目录和文件
-    merged_dir = "non_us_ips/merged"
-    if os.path.exists(merged_dir):
-        print(f"\n✅ {merged_dir} 目录存在")
-        merged_files = [f for f in os.listdir(merged_dir) if f.endswith('.txt')]
-        if merged_files:
-            print("合并文件:")
-            for file in sorted(merged_files)[-5:]:  # 显示最近5个文件
-                file_path = os.path.join(merged_dir, file)
-                file_size = os.path.getsize(file_path)
-                mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
-                print(f"  {file} ({file_size} bytes, 修改时间: {mtime})")
-        else:
-            print("  ❌ 没有合并文件")
-    else:
-        print(f"❌ {merged_dir} 目录不存在")
-
 def merge_and_deduplicate_ips(target_date):
     """
     合并指定日期的文件，并去重IP地址
@@ -115,39 +73,26 @@ def merge_and_deduplicate_ips(target_date):
     # 确保merged目录存在
     merged_dir = "non_us_ips/merged"
     os.makedirs(merged_dir, exist_ok=True)
-    print(f"确保合并目录存在: {os.path.exists(merged_dir)}")
     
     # 使用集合进行去重
     unique_ips = set()
-    file_stats = []
     
     for file_path in files:
         try:
-            print(f"📁 处理文件: {os.path.basename(file_path)}")
-            file_ips_before = len(unique_ips)
-            
+            print(f"处理文件: {os.path.basename(file_path)}")
             with open(file_path, 'r', encoding='utf-8') as f:
                 for line in f:
                     clean_ip = extract_clean_ip(line)
                     if clean_ip:
                         unique_ips.add(clean_ip)
             
-            file_ips_added = len(unique_ips) - file_ips_before
-            file_stats.append((os.path.basename(file_path), file_ips_added))
-            print(f"  ✅ 新增 {file_ips_added} 个唯一IP")
-            
         except Exception as e:
-            print(f"❌ 处理文件 {file_path} 时出错: {e}")
-            file_stats.append((os.path.basename(file_path), 0))
+            print(f"处理文件 {file_path} 时出错: {e}")
     
-    print(f"\n📊 去重统计:")
-    for filename, count in file_stats:
-        print(f"  {filename}: +{count} 个唯一IP")
-    
-    print(f"🎯 最终结果: {len(unique_ips)} 个唯一IP地址")
+    print(f"去重后得到 {len(unique_ips)} 个唯一IP地址")
     
     if not unique_ips:
-        print("⚠️ 没有提取到任何有效的IP地址")
+        print("没有提取到任何有效的IP地址")
         return False
     
     # 写入合并后的文件
@@ -157,45 +102,23 @@ def merge_and_deduplicate_ips(target_date):
     try:
         with open(merged_file, 'w', encoding='utf-8') as f:
             f.write(f"# Merged and Deduplicated non-US IPs for {output_date}\n")
-            f.write(f"# Source date: {target_date}\n")
             f.write(f"# Total unique IPs: {len(unique_ips)}\n")
-            f.write(f"# Source files: {len(files)}\n")
-            f.write(f"# Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            
-            for filename, count in file_stats:
-                f.write(f"#   {filename}: {count} unique IPs\n")
-            
-            f.write("\n")
+            f.write(f"# Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
             sorted_ips = sorted(unique_ips, key=lambda ip: [int(part) for part in ip.split('.')])
             for ip in sorted_ips:
                 f.write(ip + '\n')
         
-        # 验证文件是否成功写入
-        if os.path.exists(merged_file):
-            file_size = os.path.getsize(merged_file)
-            print(f"✅ 成功生成合并文件: {merged_file}")
-            print(f"📏 文件大小: {file_size} 字节")
-            print(f"🔢 包含IP数量: {len(unique_ips)}")
-            
-            # 显示文件内容预览
-            with open(merged_file, 'r', encoding='utf-8') as f:
-                preview_lines = f.readlines()[:5]
-            print("📋 文件预览:")
-            for line in preview_lines:
-                print(f"  {line.strip()}")
-                
-            return True
-        else:
-            print(f"❌ 文件生成失败: {merged_file} 不存在")
-            return False
+        print(f"✅ 成功生成合并文件: {merged_file}")
+        print(f"包含 {len(unique_ips)} 个唯一IP")
+        return True
             
     except Exception as e:
-        print(f"❌ 写入合并文件时出错: {e}")
+        print(f"写入合并文件时出错: {e}")
         return False
 
 def main():
-    print("=== 开始执行IP合并去重脚本 ===")
+    print("开始执行IP合并去重脚本")
     
     if len(sys.argv) > 1:
         target_date = sys.argv[1]
@@ -207,12 +130,10 @@ def main():
     success = merge_and_deduplicate_ips(target_date)
     
     if success:
-        print("=== 合并去重成功 ===")
-        # 运行调试函数
-        debug_file_system()
+        print("合并去重成功")
         sys.exit(0)
     else:
-        print("=== 合并去重失败 ===")
+        print("合并去重失败")
         sys.exit(1)
 
 if __name__ == "__main__":
