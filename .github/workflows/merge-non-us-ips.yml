@@ -1,4 +1,4 @@
-name: Merge Non-US IPs
+name: Merge and Deduplicate Non-US IPs
 
 on:
   schedule:
@@ -28,46 +28,66 @@ jobs:
           if [ -n "${{ github.event.inputs.date_override }}" ]; then
             TARGET_DATE="${{ github.event.inputs.date_override }}"
           else
-            # 使用前天日期
             TARGET_DATE=$(date -d "2 days ago" +%Y%m%d)
           fi
           echo "target_date=$TARGET_DATE" >> $GITHUB_OUTPUT
           echo "目标处理日期: $TARGET_DATE"
-          echo "文件匹配模式: non_us_ips_${TARGET_DATE}_*.txt"
           
-      - name: Check existing files
+      - name: Show repository status before merge
+        run: |
+          echo "=== 合并前的文件状态 ==="
+          find non_us_ips -name "*.txt" | head -10 || echo "没有找到txt文件"
+          git status --porcelain || echo "git status 失败"
+          
+      - name: Merge and deduplicate IPs
         run: |
           TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          echo "=== 检查现有文件 ==="
-          echo "non_us_ips 目录内容:"
-          ls -la non_us_ips/ || echo "non_us_ips 目录不存在"
-          
-          echo "=== 匹配目标日期的文件 ==="
-          find non_us_ips -name "non_us_ips_${TARGET_DATE}_*.txt" | head -10
-          
-          echo "=== 所有 non_us_ips 文件 ==="
-          find non_us_ips -name "non_us_ips_*.txt" | head -10
-          
-      - name: Merge files from target date
-        run: |
-          TARGET_DATE="${{ steps.date_calc.outputs.target_date }}"
-          echo "开始合并日期: $TARGET_DATE"
+          echo "开始合并和去重日期: $TARGET_DATE"
           python .github/scripts/merge_non_us_ips.py "$TARGET_DATE"
           
       - name: Cleanup old files
         run: |
           python .github/scripts/cleanup_old_files.py
           
-      - name: Commit and push changes
+      - name: Show repository status after merge
         run: |
-          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "=== 合并后的文件状态 ==="
+          find non_us_ips -name "*.txt" | head -10 || echo "没有找到txt文件"
+          git status --porcelain || echo "git status 失败"
+          echo "=== 新生成的文件 ==="
+          find non_us_ips/merged -name "merged_ips_*.txt" -mmin -5 2>/dev/null | head -5 || echo "没有新生成的合并文件"
+          
+      - name: Configure Git and commit changes
+        run: |
+          # 配置Git用户
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "没有需要提交的更改"
-          else
-            git add .
-            git commit -m "Auto: Merge non-US IPs for ${{ steps.date_calc.outputs.target_date }}"
-            git push
-            echo "更改已提交"
-          fi
+          # 显示详细的git状态
+          echo "=== 详细的Git状态 ==="
+          git status
+          
+          # 添加所有更改
+          echo "=== 添加文件到Git ==="
+          git add .
+          
+          # 显示暂存区的文件
+          echo "=== 暂存区的文件 ==="
+          git diff --cached --name-only
+          
+          # 提交更改
+          echo "=== 提交更改 ==="
+          git commit -m "Auto: Merge and deduplicate non-US IPs for ${{ steps.date_calc.outputs.target_date }} [$(date +%Y-%m-%d)]" || echo "没有更改可提交"
+          
+      - name: Push changes to repository
+        run: |
+          echo "=== 推送到仓库 ==="
+          git push origin HEAD:${GITHUB_REF#refs/heads/} || echo "推送失败"
+          
+      - name: Verify push result
+        run: |
+          echo "=== 推送验证 ==="
+          echo "如果上面显示'推送失败'，请检查:"
+          echo "1. GITHUB_TOKEN 权限"
+          echo "2. 分支保护规则"
+          echo "3. 工作流权限设置"
