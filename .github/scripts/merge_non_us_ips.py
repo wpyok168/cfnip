@@ -41,25 +41,17 @@ def get_files_by_date(target_date):
         print(f"❌ 基础目录 {base_dir} 不存在")
         return []
     
-    # 显示目录中的所有文件
-    all_files = os.listdir(base_dir)
-    print(f"non_us_ips 目录中的所有文件: {all_files}")
+    # 显示所有可用的文件
+    all_files = glob.glob(os.path.join(base_dir, "non_us_ips_*.txt"))
+    print(f"所有可用的文件: {[os.path.basename(f) for f in all_files]}")
     
     # 查找匹配目标日期的文件
-    # 你的文件格式是: non_us_ips_20251108_042028.txt
-    # 所以我们要匹配 non_us_ips_YYYYMMDD_*.txt
     pattern = os.path.join(base_dir, f"non_us_ips_{target_date}_*.txt")
     files = glob.glob(pattern)
     
-    print(f"匹配模式: {pattern}")
-    print(f"找到的文件: {files}")
-    
     if not files:
-        print(f"未找到精确匹配的文件，尝试包含目标日期的所有文件")
-        # 查找所有包含目标日期的文件
-        all_txt_files = glob.glob(os.path.join(base_dir, "*.txt"))
-        files = [f for f in all_txt_files if target_date in os.path.basename(f)]
-        print(f"包含 {target_date} 的文件: {files}")
+        print(f"未找到精确匹配的文件，尝试模糊匹配")
+        files = [f for f in all_files if target_date in os.path.basename(f)]
     
     return sorted(files)
 
@@ -69,7 +61,7 @@ def merge_and_deduplicate_ips(target_date):
     """
     print(f"开始处理日期: {target_date}")
     
-    # 确保日期格式正确（YYYYMMDD）
+    # 确保日期格式正确
     if '-' in target_date:
         target_date_clean = target_date.replace('-', '')
     else:
@@ -81,25 +73,23 @@ def merge_and_deduplicate_ips(target_date):
     
     if not files:
         print(f"❌ 未找到日期为 {target_date_clean} 的文件")
-        # 显示目录中所有的txt文件
-        all_txt_files = glob.glob("non_us_ips/*.txt")
-        if all_txt_files:
-            print("non_us_ips 目录中的所有txt文件:")
-            for f in sorted(all_txt_files):
+        # 显示最近的几个文件作为参考
+        all_files = glob.glob("non_us_ips/non_us_ips_*.txt")
+        if all_files:
+            recent_files = sorted(all_files)[-5:]
+            print("最近的文件:")
+            for f in recent_files:
                 print(f"  - {os.path.basename(f)}")
-        else:
-            print("non_us_ips 目录中没有txt文件")
         return False
     
     print(f"找到 {len(files)} 个文件进行合并和去重:")
     for f in files:
-        file_size = os.path.getsize(f)
-        print(f"  - {os.path.basename(f)} ({file_size} 字节)")
+        print(f"  - {os.path.basename(f)}")
     
     # 确保merged目录存在
     merged_dir = "non_us_ips/merged"
     os.makedirs(merged_dir, exist_ok=True)
-    print(f"合并目录: {merged_dir}")
+    print(f"合并目录: {merged_dir} (存在: {os.path.exists(merged_dir)})")
     
     # 使用集合进行去重
     unique_ips = set()
@@ -107,7 +97,7 @@ def merge_and_deduplicate_ips(target_date):
     
     for file_path in files:
         try:
-            print(f"正在处理文件: {os.path.basename(file_path)}")
+            print(f"处理文件: {os.path.basename(file_path)}")
             file_ips_count = 0
             
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -122,20 +112,19 @@ def merge_and_deduplicate_ips(target_date):
             
         except Exception as e:
             print(f"处理文件 {file_path} 时出错: {e}")
-            return False
     
-    print(f"总共处理了 {total_lines_processed} 行，去重后得到 {len(unique_ips)} 个唯一IP地址")
+    print(f"处理了 {total_lines_processed} 行，去重后得到 {len(unique_ips)} 个唯一IP地址")
     
     if not unique_ips:
         print("❌ 没有提取到任何有效的IP地址")
-        # 显示第一个文件的内容来调试
+        # 显示一些原始数据来调试
         if files:
             sample_file = files[0]
-            print(f"样本文件 {os.path.basename(sample_file)} 的前10行内容:")
+            print(f"样本文件 {os.path.basename(sample_file)} 的前5行:")
             try:
                 with open(sample_file, 'r', encoding='utf-8') as f:
                     for i, line in enumerate(f):
-                        if i >= 10:
+                        if i >= 5:
                             break
                         print(f"  行 {i+1}: {repr(line)}")
             except Exception as e:
@@ -149,9 +138,9 @@ def merge_and_deduplicate_ips(target_date):
     try:
         with open(merged_file, 'w', encoding='utf-8') as f:
             # 写入文件头
-            f.write(f"# 合并去重的非美国IP地址 - 日期: {output_date}\n")
-            f.write(f"# 源日期: {target_date_clean}\n")
-            f.write(f"# 唯一IP数量: {len(unique_ips)}\n")
+            f.write(f"# 合并和去重后的非美国IP地址 - {output_date}\n")
+            f.write(f"# 源数据日期: {target_date_clean}\n")
+            f.write(f"# 唯一IP总数: {len(unique_ips)}\n")
             f.write(f"# 源文件数量: {len(files)}\n")
             f.write(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
@@ -163,7 +152,7 @@ def merge_and_deduplicate_ips(target_date):
         # 验证文件是否成功创建
         if os.path.exists(merged_file):
             file_size = os.path.getsize(merged_file)
-            line_count = len(open(merged_file, 'r', encoding='utf-8').readlines())
+            line_count = len(unique_ips) + 7  # IP数量 + 头信息行数
             
             print(f"✅ 成功生成合并文件: {merged_file}")
             print(f"📏 文件大小: {file_size} 字节")
