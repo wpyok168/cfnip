@@ -2,11 +2,9 @@ name: 🌐 收集IP地址并保存到文件
 
 on:
   schedule:
-    # UTC，换算北京时间自行计算；下面示例：北京时间 00:30, 01:30 …
     - cron: '0,30 * * * *'
       timezone: 'Asia/Shanghai'
-    # 如果想要额外整点：取消下面注释，注意会叠加
-    # - cron: '0 * * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       reason:
@@ -60,7 +58,7 @@ jobs:
           echo "🌏 时区: $(cat /etc/timezone)"
           echo "🔍 仓库: ${{ github.repository }}"
           echo "🌿 分支: ${{ github.ref }}"
-          echo "👤 触发者: ${{ shturl.cc/BK }}"
+          echo "👤 触发者: ${{ github.actor }}"
 
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
             echo "trigger_type=scheduled" >> $GITHUB_OUTPUT
@@ -122,6 +120,42 @@ jobs:
             echo "result=failure" >> $GITHUB_OUTPUT
             exit 1
           fi
+
+      - name: 🧹 IPv4 / IPv6 去重 + 合法性校验
+        run: |
+          python3 - <<'PY'
+          import sys
+          from ipaddress import IPv4Address, IPv6Address, AddressValueError
+
+          def dedupe_file(src, dst, ver):
+              seen = set()
+              out = []
+              with open(src, "r", encoding="utf-8") as f:
+                  for line in f:
+                      s = line.strip()
+                      if not s:
+                          continue
+                      try:
+                          if ver == 4:
+                              ip = IPv4Address(s)
+                          else:
+                              ip = IPv6Address(s)
+                      except AddressValueError:
+                          continue
+                      if ip not in seen:
+                          seen.add(ip)
+                          out.append(str(ip))
+              if ver == 4:
+                  out = sorted(out, key=lambda x: int(IPv4Address(x)))
+              else:
+                  out = sorted(out)
+              with open(dst, "w", encoding="utf-8", newline="\n") as f:
+                  f.write("\n".join(out) + "\n")
+              print(f"{dst} 去重完成，有效数量：{len(out)}")
+
+          dedupe_file("ip.txt", "ip.txt", 4)
+          dedupe_file("ipv6.txt", "ipv6.txt", 6)
+          PY
 
       - name: 🔍 验证生成的文件
         id: file-check
