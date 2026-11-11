@@ -40,6 +40,7 @@ class CFIPCollector:
             print(f'✅ 已加载 {len(self.urls)} 个URL数据源')
         except Exception as e:
             print(f'❌ 加载URL配置文件失败: {e}，使用默认URL列表')
+            # 优选域名:https://github.com/gslege/CloudflareIP/blob/main/Domain.txt
             self.urls = [
                 'https://ip.164746.xyz',
                 'https://api.uouin.com/cloudflare.html',
@@ -51,7 +52,11 @@ class CFIPCollector:
                 'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/030101-bestcf.txt',
                 'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/refs/heads/main/wetest-cloudflare-v4.txt',
                 'https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html',
-                'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/result.txt',
+                'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/JP.txt',
+                'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/DE.txt',
+                'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/NL.txt',
+                'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/SG.txt',
+                'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/US.txt',
                 'https://raw.githubusercontent.com/camel52zhang/yxip/refs/heads/main/ip.txt',
                 'https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist.txt',
                 'https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt'
