@@ -1,0 +1,45 @@
+{
+    "request_settings": {
+        "timeout": 10,
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "max_workers_url": 5,
+        "max_workers_ipv4": 8,
+        "max_workers_ipv6": 6,
+        "max_workers_trace": 6,
+        "retry_times": 2,
+        "retry_delay": 1,
+        "geo_delay": 0.2,
+        "trace_timeout": 10,
+        "trace_random_delay": [0.2, 0.7]
+    },
+    "output_settings": {
+        "ipv4_filename": "ip.txt",
+        "ipv6_filename": "ipv6.txt",
+        "pure_ipv4": "pure_v4.txt",
+        "pure_ipv6": "pure_v6.txt",
+        "non_us_folder": "non_us_ips",
+        "port": 8443,
+        "save_all_ips": true,
+        "save_non_us_separately": true,
+        "save_pure_ip": true
+    },
+    "location_settings": {
+        "baidu_api_url": "https://opendata.baidu.com/api.php",
+        "fallback_api": "https://api.ip.sb/geoip/",
+        "us_keywords": ["美国", "United States", "US", "USA"],
+        "enable_location_query": true,
+        "use_cache": true
+    },
+    "filter_settings": {
+        "enable_ip_validation": true,
+        "remove_private_ips": true,
+        "remove_duplicates": true,
+        "filter_to_cf_range": true,
+        "enable_trace_check_v4": true,
+        "enable_trace_check_v6": false
+    },
+    "progress_settings": {
+        "show_progress": true,
+        "progress_interval": 10
+    }
+}
