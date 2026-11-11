@@ -44,7 +44,6 @@ class CFIPCollector:
             self.urls = [
                 'https://ip.164746.xyz',
                 'https://api.uouin.com/cloudflare.html',
-                'https://ipdb.api.030101.xyz/?type=bestcf&country=true',
                 'https://addressesapi.090227.xyz/CloudFlareYes',
                 'https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt',
                 'https://www.wetest.vip/page/cloudflare/address_v6.html',
@@ -58,8 +57,12 @@ class CFIPCollector:
                 'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/SG.txt',
                 'https://raw.githubusercontent.com/gslege/CloudflareIP/refs/heads/main/US.txt',
                 'https://raw.githubusercontent.com/camel52zhang/yxip/refs/heads/main/ip.txt',
-                'https://raw.githubusercontent.com/Senflare/Senflare-IP/refs/heads/main/IPlist.txt',
-                'https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt'
+                'https://raw.githubusercontent.com/hubbylei/bestcf/refs/heads/main/bestcf.txt',
+                'https://github.com/ymyuuu/IPDB/blob/main/BestCF/bestcfv4.txt',
+                'https://raw.githubusercontent.com/minghe168/cfip-auto/refs/heads/main/full_ips.txt',
+                'https://raw.githubusercontent.com/yuanxiawan/cfipv4db/refs/heads/main/cfip.txt',
+                'https://raw.githubusercontent.com/nyoungo/bestIp/refs/heads/main/best_ips.txt',
+                'https://ip.164746.xyz/'
             ]
     
     def load_main_config(self, config_file):
