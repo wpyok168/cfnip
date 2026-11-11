@@ -63,7 +63,8 @@ class CFIPCollector:
                 'https://raw.githubusercontent.com/hubbylei/bestcf/main/bestcf.txt',
                 'https://raw.githubusercontent.com/minghe168/cfip-auto/main/full_ips.txt',
                 'https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cfip.txt',
-                'https://raw.githubusercontent.com/nyoungo/bestIp/main/best_ips.txt'
+                'https://raw.githubusercontent.com/nyoungo/bestIp/main/best_ips.txt',
+                'https://www.wetest.vip/page/cloudflare/address_v4.html'
             ]
             self.urls = [self._github_blob_to_raw(u.strip()) for u in raw_list if u.strip()]
 
