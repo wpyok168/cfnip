@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Cloudflare IP地址收集器 v3.1
+Cloudflare IP地址收集器 v3.1【修复完整版】
 新增：cdn-cgi/trace 连通预检，优先从 trace 获取国家码
-修复：重试、多 GeoIP 兜底、完善正则、blob 自动转 raw、限流、官方段过滤
-适配 GitHub Actions 定时运行
+修复：trace 全失败兜底、随机UA、随机延迟、https预检、限流、重试、多 GeoIP 兜底、完善正则、blob 自动转 raw、官方段过滤
+适配 GitHub Actions 定时运行，对齐 yuanxiawan/cfipv4db 容错策略
 """
 
 import requests
 import re
 import os
 import time
+import random
 import ipaddress
 import json
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from datetime import datetime, timezone, timedelta
+
+UA_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.7 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+]
 
 class CFIPCollector:
     def __init__(self, urls_config='urls.json', main_config='config.json'):
@@ -25,7 +32,7 @@ class CFIPCollector:
         self.load_urls_config(urls_config)
         self.load_main_config(main_config)
         self.setup_global_variables()
-        print("Cloudflare IP收集器 v3.1 初始化完成")
+        print("Cloudflare IP收集器 v3.1【修复完整版】初始化完成")
 
     def get_beijing_time(self):
         return datetime.now(self.beijing_tz)
@@ -88,15 +95,16 @@ class CFIPCollector:
         self.config = {
             "request_settings": {
                 "timeout": 10,
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "user_agent": random.choice(UA_POOL),
                 "max_workers_url": 5,
                 "max_workers_ipv4": 8,
                 "max_workers_ipv6": 6,
-                "max_workers_trace": 16,
+                "max_workers_trace": 6,
                 "retry_times": 2,
                 "retry_delay": 1,
                 "geo_delay": 0.2,
-                "trace_timeout": 6
+                "trace_timeout": 10,
+                "trace_random_delay": [0.2, 0.7]
             },
             "output_settings": {
                 "ipv4_filename": "ip.txt",
@@ -163,14 +171,17 @@ class CFIPCollector:
             return any(ip_obj in net for net in self.cf_v6_nets)
 
     def trace_check(self, ip: str, is_v6: bool):
-        """cdn-cgi/trace 预检，成功返回 (True, country_code)"""
-        timeout = self.config["request_settings"]["trace_timeout"]
+        """cdn-cgi/trace 预检，成功返回 (True, country_code)，增加随机延时 + 随机UA + https"""
+        req_cfg = self.config["request_settings"]
+        time.sleep(random.uniform(*req_cfg["trace_random_delay"]))
+        headers = {"User-Agent": random.choice(UA_POOL)}
+        timeout = req_cfg["trace_timeout"]
         if is_v6:
-            url = f"http://[{ip}]/cdn-cgi/trace"
+            url = f"https://[{ip}]/cdn-cgi/trace"
         else:
-            url = f"http://{ip}/cdn-cgi/trace"
+            url = f"https://{ip}/cdn-cgi/trace"
         try:
-            resp = requests.get(url, headers=self.headers, timeout=timeout)
+            resp = requests.get(url, headers=headers, timeout=timeout)
             if resp.status_code == 200 and "loc=" in resp.text:
                 m = re.search(r"loc=([A-Z]{2})", resp.text)
                 cc = m.group(1) if m else "UNKNOWN"
@@ -182,7 +193,6 @@ class CFIPCollector:
     def run_trace_filter(self, ip_set, is_v6: bool):
         flt = self.config["filter_settings"]
         if is_v6 and not flt.get("enable_trace_check_v6", False):
-            # v6 不开启预检，全部放行
             return [(ip, None) for ip in ip_set]
         if not is_v6 and not flt.get("enable_trace_check_v4", True):
             return [(ip, None) for ip in ip_set]
@@ -198,6 +208,10 @@ class CFIPCollector:
                 if ok:
                     passed.append((ip, cc))
         print(f"✅ trace 预检通过：{len(passed)} / {len(ip_set)}")
+        # ========== 核心兜底：全部被拦截，放行全部候选 IP ==========
+        if len(passed) == 0:
+            print("\n⚠️ 全部 trace 请求被 Cloudflare 风控拦截，触发降级，保留全部候选IP，避免输出空文件")
+            return [(ip, None) for ip in ip_set]
         return passed
 
     def ensure_folders(self):
@@ -220,7 +234,8 @@ class CFIPCollector:
         req_cfg = self.config['request_settings']
         for attempt in range(req_cfg['retry_times'] + 1):
             try:
-                resp = requests.get(url, headers=self.headers, timeout=req_cfg['timeout'])
+                headers = {"User-Agent": random.choice(UA_POOL)}
+                resp = requests.get(url, headers=headers, timeout=req_cfg['timeout'])
                 resp.raise_for_status()
                 return resp.text
             except requests.exceptions.RequestException:
@@ -260,7 +275,6 @@ class CFIPCollector:
 
     def get_location(self, ip, pre_cc=None):
         loc_cfg = self.config['location_settings']
-        # 如果 trace 已经拿到国家码，优先使用
         if pre_cc is not None and pre_cc != "UNKNOWN":
             name_map = {
                 "JP": "日本", "SG": "新加坡", "DE": "德国", "NL": "荷兰",
@@ -273,7 +287,6 @@ class CFIPCollector:
         if loc_cfg['use_cache'] and ip in self.cache:
             return self.cache[ip], True
 
-        # 优先百度
         try:
             url = f"{loc_cfg['baidu_api_url']}?co=&resource_id=6006&oe=utf8&query={ip}"
             r = requests.get(url, headers=self.headers, timeout=5)
@@ -285,7 +298,6 @@ class CFIPCollector:
                     return loc, True
         except Exception:
             pass
-        # 兜底 ip.sb
         try:
             r = requests.get(loc_cfg['fallback_api'] + ip, headers=self.headers, timeout=5)
             j = r.json()
@@ -441,7 +453,7 @@ class CFIPCollector:
 
     def main(self):
         print("=" * 50)
-        print("🌐 Cloudflare IP地址收集器 v3.1")
+        print("🌐 Cloudflare IP地址收集器 v3.1【修复完整版】")
         print("=" * 50)
         print(f"🕐 {self.get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')}")
         self.print_config_summary()
@@ -453,7 +465,6 @@ class CFIPCollector:
         v4_set, v6_set = self.process_urls_parallel()
         print(f"\n🎉 初步收集: IPv4 {len(v4_set)} | IPv6 {len(v6_set)}")
 
-        # trace 预检
         trace_v4 = self.run_trace_filter(v4_set, is_v6=False)
         trace_v6 = self.run_trace_filter(v6_set, is_v6=True)
 
