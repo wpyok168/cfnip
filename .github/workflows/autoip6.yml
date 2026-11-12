@@ -21,7 +21,7 @@ on:
     branches: [ main, master ]
     paths:
       - '.github/workflows/**'
-      - 'autoip6-0.py'
+      - 'autoip6.py'
 
 env:
   PYTHON_VERSION: '3.x'
@@ -61,8 +61,8 @@ jobs:
           echo "🌏 时区: $(cat /etc/timezone)"
           echo "🔍 仓库: ${{ github.repository }}"
           echo "🌿 分支: ${{ github.ref }}"
-          echo "👤 触发者: ${{ shturl.cc/WX }}"
-
+          echo "👤 触发者: ${{ shturl.cc/4U }}"
+          
           # 设置触发类型输出
           if [ "${{ github.event_name }}" == "schedule" ]; then
             echo "触发类型: 定时调度"
