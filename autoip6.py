@@ -100,7 +100,7 @@ class CFIPCollector:
                 "max_workers_url": 10,
                 "max_workers_ipv4": 10,
                 "max_workers_ipv6": 6,
-                "max_workers_trace": 5,
+                "max_workers_trace": 3,
                 "retry_times": 2,
                 "retry_delay": 2,
                 "geo_delay": 0.2,
