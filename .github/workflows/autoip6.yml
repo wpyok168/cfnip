@@ -3,7 +3,7 @@ name: 🌐 收集IP地址并保存到文件
 on:
   schedule:
     - cron: '7,37 * * * *'   # 避开整点/半点高峰
- #     timezone: 'Asia/Shanghai'    
+ #     timezone: 'Asia/Shanghai'
  #   - cron: '0 * * * *'    # 备用调度：每小时的0分钟运行（北京时间整点）
   workflow_dispatch:        # 允许手动触发
     inputs:
@@ -21,7 +21,7 @@ on:
     branches: [ main, master ]
     paths:
       - '.github/workflows/**'
-      - 'autoip6.py'
+      - 'autoip6-0.py'
 
 env:
   PYTHON_VERSION: '3.x'
@@ -41,7 +41,7 @@ jobs:
       timestamp: ${{ steps.timestamp.outputs.time }}
       files_changed: ${{ steps.changes-check.outputs.has_changes }}
       trigger_type: ${{ steps.debug.outputs.trigger_type }}
-    
+
     steps:
       # ========== 设置时区 ==========
       - name: 🕐 设置北京时间时区
@@ -61,8 +61,8 @@ jobs:
           echo "🌏 时区: $(cat /etc/timezone)"
           echo "🔍 仓库: ${{ github.repository }}"
           echo "🌿 分支: ${{ github.ref }}"
-          echo "👤 触发者: ${{ github.actor }}"
-          
+          echo "👤 触发者: ${{ shturl.cc/WX }}"
+
           # 设置触发类型输出
           if [ "${{ github.event_name }}" == "schedule" ]; then
             echo "触发类型: 定时调度"
@@ -92,14 +92,6 @@ jobs:
           echo "📅 北京时间: $current_time"
           echo "🕐 UTC时间: $utc_time"
 
-      # ========== 清理 ==========
-      - name: 🧹 清理旧工作流运行记录
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          retain_days: ${{ env.RETAIN_DAYS }}
-          keep_minimum_runs: ${{ env.KEEP_MINIMUM_RUNS }}
-          repository: ${{ github.repository }}
-
       # ========== 仓库设置 ==========
       - name: 📥 检出仓库
         uses: actions/checkout@v4
@@ -118,19 +110,19 @@ jobs:
         run: |
           echo "🔧 安装Python依赖..."
           pip install --upgrade pip
-          pip install requests  # 移除了冲突的 ipaddress 和无用的 pytz
+          pip install requests
           echo "✅ 依赖安装成功"
 
       # ========== IP地址收集 ==========
       - name: 🌍 收集IP地址
         id: ip-collection
-        timeout-minutes: 20    # 增加超时保护，防卡死
+        timeout-minutes: 20
         run: |
           echo "🕸️ 开始收集IP地址..."
           echo "📋 触发类型: ${{ steps.debug.outputs.trigger_type }}"
           echo "🕐 开始时间(北京时间): $(date)"
           start_time=$(date +%s)
-          
+
           if python autoip6.py; then
             end_time=$(date +%s)
             duration=$((end_time - start_time))
@@ -150,9 +142,8 @@ jobs:
         run: |
           echo "📋 检查生成的文件..."
           echo "🕐 检查时间(北京时间): $(date)"
-          
+
           if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
-            # 过滤掉 '#' 注释行进行准确计数
             ip_count=$(grep -vc '^#' ip.txt || true)
             echo "✅ ip.txt: $ip_count 个IPv4地址"
             echo "ip_count=$ip_count" >> $GITHUB_OUTPUT
@@ -160,18 +151,16 @@ jobs:
             echo "❌ ip.txt 文件缺失或为空"
             exit 1
           fi
-          
+
           if [ -f "ipv6.txt" ] && [ -s "ipv6.txt" ]; then
             ipv6_count=$(grep -vc '^#' ipv6.txt || true)
             echo "✅ ipv6.txt: $ipv6_count 个IPv6地址"
             echo "ipv6_count=$ipv6_count" >> $GITHUB_OUTPUT
           else
-            # 修复：IPv6 常常为空，允许为空不再导致直接失败
             echo "⚠️ ipv6.txt 文件缺失或为空（本次未收集到有效 IPv6）"
             echo "ipv6_count=0" >> $GITHUB_OUTPUT
           fi
-          
-          # 检查非美国区域IP文件
+
           echo "🔍 检查非美国区域IP文件..."
           non_us_files=$(find non_us_ips -name "non_us_ips_*.txt" -type f 2>/dev/null | wc -l)
           if [ "$non_us_files" -gt 0 ]; then
@@ -187,10 +176,9 @@ jobs:
             echo "non_us_count=0" >> $GITHUB_OUTPUT
           fi
 
-      # ========== 清理膨胀文件 (新增) ==========
+      # ========== 清理膨胀文件 ==========
       - name: 🧹 清理历史 Non-US 文件
         run: |
-          # 防止 non_us_ips 目录无限膨胀，只保留最新的 10 个文件
           if [ -d "non_us_ips" ]; then
             cd non_us_ips
             ls -t non_us_ips_*.txt 2>/dev/null | tail -n +11 | xargs -r rm --
@@ -222,7 +210,7 @@ jobs:
         with:
           commit_message: |
             chore: 更新IP地址 [自动]
-            
+
             • 触发类型: ${{ steps.debug.outputs.trigger_type }}
             • 更新时间(北京时间): ${{ steps.timestamp.outputs.time }}
             • 更新 ip.txt: ${{ steps.file-check.outputs.ip_count }} 个IPv4地址
@@ -249,18 +237,17 @@ jobs:
           echo "- **仓库:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
           echo "- **分支:** ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           echo "### 📁 文件状态" >> $GITHUB_STEP_SUMMARY
           echo "- **IPv4地址数量:** ${{ steps.file-check.outputs.ip_count }}" >> $GITHUB_STEP_SUMMARY
           echo "- **IPv6地址数量:** ${{ steps.file-check.outputs.ipv6_count }}" >> $GITHUB_STEP_SUMMARY
-          
-          # 添加非美国区域IP信息
+
           if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
             echo "- **非美国区域IP文件:** ${{ steps.file-check.outputs.non_us_files }} 个文件" >> $GITHUB_STEP_SUMMARY
             echo "- **最新非美国IP文件:** ${{ steps.file-check.outputs.latest_non_us }}" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           if [ "${{ steps.changes-check.outputs.has_changes }}" == "true" ]; then
             echo "### ✅ 变更已提交" >> $GITHUB_STEP_SUMMARY
             echo "IP地址文件已更新并自动提交。" >> $GITHUB_STEP_SUMMARY
@@ -271,7 +258,7 @@ jobs:
             echo "### 📭 无变更" >> $GITHUB_STEP_SUMMARY
             echo "IP地址文件已是最新版本。" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*由 GitHub Actions 自动生成 - 北京时间*" >> $GITHUB_STEP_SUMMARY
@@ -300,3 +287,12 @@ jobs:
           if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
             echo "📁 非美国区域IP文件: ${{ steps.file-check.outputs.non_us_files }} 个"
           fi
+
+      # ========== 在全部跑完之后清理运行记录：只保留最近 5 条 ==========
+      - name: 🧹 清理旧工作流运行记录（后置）
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          retain_days: ${{ env.RETAIN_DAYS }}
+          keep_minimum_runs: ${{ env.KEEP_MINIMUM_RUNS }}
+          repository: ${{ github.repository }}
