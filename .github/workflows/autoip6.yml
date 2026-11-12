@@ -61,7 +61,7 @@ jobs:
           echo "🌏 时区: $(cat /etc/timezone)"
           echo "🔍 仓库: ${{ github.repository }}"
           echo "🌿 分支: ${{ github.ref }}"
-          echo "👤 触发者: ${{ shturl.cc/4U }}"
+          echo "👤 触发者: ${{ github.actor }}"
           
           # 设置触发类型输出
           if [ "${{ github.event_name }}" == "schedule" ]; then
@@ -182,7 +182,7 @@ jobs:
           if [ -d "non_us_ips" ]; then
             cd non_us_ips
             ls -t non_us_ips_*.txt 2>/dev/null | tail -n +11 | xargs -r rm --
-            echo "✅ 已清理旧的 Non-US 文件，当前保留："
+            echo "✅ 已清理旧的 Non‑US 文件，当前保留："
             ls -1
           fi
 
