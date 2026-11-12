@@ -2,7 +2,7 @@ name: 🌐 收集IP地址并保存到文件
 
 on:
   schedule:
-    - cron: '7,37 * * * *'   # 主要调度：每30分钟运行（北京时间）
+    - cron: '7,37 * * * *'   # 避开整点/半点高峰
  #     timezone: 'Asia/Shanghai'    
  #   - cron: '0 * * * *'    # 备用调度：每小时的0分钟运行（北京时间整点）
   workflow_dispatch:        # 允许手动触发
@@ -118,12 +118,13 @@ jobs:
         run: |
           echo "🔧 安装Python依赖..."
           pip install --upgrade pip
-          pip install requests ipaddress pytz
+          pip install requests  # 移除了冲突的 ipaddress 和无用的 pytz
           echo "✅ 依赖安装成功"
 
       # ========== IP地址收集 ==========
       - name: 🌍 收集IP地址
         id: ip-collection
+        timeout-minutes: 20    # 增加超时保护，防卡死
         run: |
           echo "🕸️ 开始收集IP地址..."
           echo "📋 触发类型: ${{ steps.debug.outputs.trigger_type }}"
@@ -151,7 +152,8 @@ jobs:
           echo "🕐 检查时间(北京时间): $(date)"
           
           if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
-            ip_count=$(wc -l < ip.txt | tr -d ' ')
+            # 过滤掉 '#' 注释行进行准确计数
+            ip_count=$(grep -vc '^#' ip.txt || true)
             echo "✅ ip.txt: $ip_count 个IPv4地址"
             echo "ip_count=$ip_count" >> $GITHUB_OUTPUT
           else
@@ -160,12 +162,13 @@ jobs:
           fi
           
           if [ -f "ipv6.txt" ] && [ -s "ipv6.txt" ]; then
-            ipv6_count=$(wc -l < ipv6.txt | tr -d ' ')
+            ipv6_count=$(grep -vc '^#' ipv6.txt || true)
             echo "✅ ipv6.txt: $ipv6_count 个IPv6地址"
             echo "ipv6_count=$ipv6_count" >> $GITHUB_OUTPUT
           else
-            echo "❌ ipv6.txt 文件缺失或为空"
-            exit 1
+            # 修复：IPv6 常常为空，允许为空不再导致直接失败
+            echo "⚠️ ipv6.txt 文件缺失或为空（本次未收集到有效 IPv6）"
+            echo "ipv6_count=0" >> $GITHUB_OUTPUT
           fi
           
           # 检查非美国区域IP文件
@@ -173,7 +176,7 @@ jobs:
           non_us_files=$(find non_us_ips -name "non_us_ips_*.txt" -type f 2>/dev/null | wc -l)
           if [ "$non_us_files" -gt 0 ]; then
             latest_non_us=$(find non_us_ips -name "non_us_ips_*.txt" -type f | sort -r | head -1)
-            non_us_count=$(wc -l < "$latest_non_us" | tr -d ' ')
+            non_us_count=$(grep -vc '^#' "$latest_non_us" || true)
             echo "✅ 非美国区域IP文件: $non_us_files 个文件，最新文件包含 $non_us_count 行"
             echo "non_us_files=$non_us_files" >> $GITHUB_OUTPUT
             echo "non_us_count=$non_us_count" >> $GITHUB_OUTPUT
@@ -184,13 +187,23 @@ jobs:
             echo "non_us_count=0" >> $GITHUB_OUTPUT
           fi
 
+      # ========== 清理膨胀文件 (新增) ==========
+      - name: 🧹 清理历史 Non-US 文件
+        run: |
+          # 防止 non_us_ips 目录无限膨胀，只保留最新的 10 个文件
+          if [ -d "non_us_ips" ]; then
+            cd non_us_ips
+            ls -t non_us_ips_*.txt 2>/dev/null | tail -n +11 | xargs -r rm --
+            echo "✅ 已清理旧的 Non-US 文件，当前保留："
+            ls -1
+          fi
+
       # ========== 变更检查 ==========
       - name: 📊 检查文件变更
         id: changes-check
         run: |
           echo "📊 检查文件变更..."
           echo "🕐 检查时间(北京时间): $(date)"
-          # 检查主要IP文件和非美国区域IP文件
           if git diff --quiet HEAD -- ip.txt ipv6.txt non_us_ips/; then
             echo "📭 未检测到文件变更"
             echo "has_changes=false" >> $GITHUB_OUTPUT
