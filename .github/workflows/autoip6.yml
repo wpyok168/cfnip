@@ -10,12 +10,6 @@ on:
       - '.github/workflows/**'
       - 'autoip6-0.py'
       - 'scripts/**'
-    paths-ignore:
-      - 'ip.txt'
-      - 'ipv6.txt'
-      - 'non_us_ips/**'
-      - 'heartbeat.log'
-      - '.keepalive'
   pull_request:
     branches: [ main, master ]
     paths:
