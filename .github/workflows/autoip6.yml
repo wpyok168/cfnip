@@ -21,7 +21,7 @@ on:
     branches: [ main, master ]
     paths:
       - '.github/workflows/**'
-      - 'autoip6.py'
+      - 'autoip6-0.py'
 
 env:
   PYTHON_VERSION: '3.x'
