@@ -1,298 +1,111 @@
-name: 🌐 收集IP地址并保存到文件
-
+name: 收集IP地址并保存到文件
 on:
   schedule:
-    - cron: '7,37 * * * *'   # 避开整点/半点高峰
- #     timezone: 'Asia/Shanghai'
- #   - cron: '0 * * * *'    # 备用调度：每小时的0分钟运行（北京时间整点）
-  workflow_dispatch:        # 允许手动触发
-    inputs:
-      reason:
-        description: '手动触发原因'
-        required: false
-        default: '手动执行'
-  push:                    # 代码推送时触发（备用）
+    - cron: '7,37 0-15 * * *'
+    - cron: '7,37 16-23 * * *'
+  workflow_dispatch:
+  push:
     branches: [ main, master ]
     paths:
       - '.github/workflows/**'
       - 'autoip6-0.py'
       - 'scripts/**'
-  pull_request:            # PR时触发（测试用）
+  pull_request:
     branches: [ main, master ]
     paths:
       - '.github/workflows/**'
       - 'autoip6-0.py'
 
 env:
-  PYTHON_VERSION: '3.x'
-  RETAIN_DAYS: 0
-  KEEP_MINIMUM_RUNS: 5
-  TZ: 'Asia/Shanghai'      # 设置时区为北京时间
+  PYTHON_VERSION: '3.12'
+  TZ: 'Asia/Shanghai'
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
-  collect-ip-addresses:
-    name: 🚀 收集IP地址
+  collect:
+    name: 🚀 收集 IP
     runs-on: ubuntu-latest
     outputs:
-      timestamp: ${{ steps.timestamp.outputs.time }}
-      files_changed: ${{ steps.changes-check.outputs.has_changes }}
       trigger_type: ${{ steps.debug.outputs.trigger_type }}
-
     steps:
-      # ========== 设置时区 ==========
-      - name: 🕐 设置北京时间时区
-        run: |
-          echo "设置时区为 Asia/Shanghai (北京时间)"
-          sudo timedatectl set-timezone Asia/Shanghai
-          echo "当前系统时间: $(date)"
-          echo "当前UTC时间: $(date -u)"
+      - name: 🕐 设置时区
+        run: sudo timedatectl set-timezone Asia/Shanghai
 
-      # ========== 调试信息 ==========
       - name: 🔍 调试触发信息
         id: debug
         run: |
-          echo "🎯 工作流触发方式: ${{ github.event_name }}"
-          echo "📅 当前系统时间: $(date)"
-          echo "🕐 当前UTC时间: $(date -u)"
-          echo "🌏 时区: $(cat /etc/timezone)"
-          echo "🔍 仓库: ${{ github.repository }}"
-          echo "🌿 分支: ${{ github.ref }}"
-          echo "👤 触发者: ${{ github.actor }}"
-          
-          # 设置触发类型输出
-          if [ "${{ github.event_name }}" == "schedule" ]; then
-            echo "触发类型: 定时调度"
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
             echo "trigger_type=scheduled" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "触发类型: 手动执行"
-            echo "原因: ${{ github.event.inputs.reason }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "trigger_type=manual" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "push" ]; then
-            echo "触发类型: 代码推送"
-            echo "trigger_type=push" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "触发类型: 拉取请求"
-            echo "trigger_type=pull_request" >> $GITHUB_OUTPUT
           else
-            echo "触发类型: 其他 (${{ github.event_name }})"
-            echo "trigger_type=other" >> $GITHUB_OUTPUT
+            echo "trigger_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
           fi
+          echo "run_at=$(date '+%Y-%m-%d %H:%M:%S')"
 
-      - name: 📝 生成北京时间戳
-        id: timestamp
-        run: |
-          current_time=$(date +'%Y-%m-%d %H:%M:%S %Z')
-          utc_time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
-          echo "time=$current_time" >> $GITHUB_OUTPUT
-          echo "utc_time=$utc_time" >> $GITHUB_OUTPUT
-          echo "📅 北京时间: $current_time"
-          echo "🕐 UTC时间: $utc_time"
-
-      # ========== 仓库设置 ==========
-      - name: 📥 检出仓库
+      - name: 📥 检出代码
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref: ${{ github.ref }}
 
-      # ========== Python环境 ==========
-      - name: 🐍 设置Python ${{ env.PYTHON_VERSION }}
+      - name: 🐍 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: 📦 安装依赖
         run: |
-          echo "🔧 安装Python依赖..."
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install requests
-          echo "✅ 依赖安装成功"
 
-      # ========== IP地址收集 ==========
-      - name: 🌍 收集IP地址
-        id: ip-collection
+      - name: 🧪 运行采集脚本
+        id: ip-run
         timeout-minutes: 20
         run: |
-          echo "🕸️ 开始收集IP地址..."
-          echo "📋 触发类型: ${{ steps.debug.outputs.trigger_type }}"
-          echo "🕐 开始时间(北京时间): $(date)"
-          start_time=$(date +%s)
+          set -e
+          python autoip6-0.py
 
-          if python autoip6.py; then
-            end_time=$(date +%s)
-            duration=$((end_time - start_time))
-            echo "✅ IP地址收集完成"
-            echo "🕐 结束时间(北京时间): $(date)"
-            echo "⏱️ 执行时间: ${duration} 秒"
-            echo "result=success" >> $GITHUB_OUTPUT
-          else
-            echo "❌ IP地址收集失败"
-            echo "result=failure" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-      # ========== 文件验证 ==========
-      - name: 🔍 验证生成的文件
+      - name: ✅ 校验输出文件
         id: file-check
         run: |
-          echo "📋 检查生成的文件..."
-          echo "🕐 检查时间(北京时间): $(date)"
-
           if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
-            ip_count=$(grep -vc '^#' ip.txt || true)
-            echo "✅ ip.txt: $ip_count 个IPv4地址"
-            echo "ip_count=$ip_count" >> $GITHUB_OUTPUT
+            echo "ok=1" >> $GITHUB_OUTPUT
           else
-            echo "❌ ip.txt 文件缺失或为空"
+            echo "ok=0" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          if [ -f "ipv6.txt" ] && [ -s "ipv6.txt" ]; then
-            ipv6_count=$(grep -vc '^#' ipv6.txt || true)
-            echo "✅ ipv6.txt: $ipv6_count 个IPv6地址"
-            echo "ipv6_count=$ipv6_count" >> $GITHUB_OUTPUT
-          else
-            echo "⚠️ ipv6.txt 文件缺失或为空（本次未收集到有效 IPv6）"
-            echo "ipv6_count=0" >> $GITHUB_OUTPUT
-          fi
-
-          echo "🔍 检查非美国区域IP文件..."
-          non_us_files=$(find non_us_ips -name "non_us_ips_*.txt" -type f 2>/dev/null | wc -l)
-          if [ "$non_us_files" -gt 0 ]; then
-            latest_non_us=$(find non_us_ips -name "non_us_ips_*.txt" -type f | sort -r | head -1)
-            non_us_count=$(grep -vc '^#' "$latest_non_us" || true)
-            echo "✅ 非美国区域IP文件: $non_us_files 个文件，最新文件包含 $non_us_count 行"
-            echo "non_us_files=$non_us_files" >> $GITHUB_OUTPUT
-            echo "non_us_count=$non_us_count" >> $GITHUB_OUTPUT
-            echo "latest_non_us=$latest_non_us" >> $GITHUB_OUTPUT
-          else
-            echo "⚠️ 未找到非美国区域IP文件"
-            echo "non_us_files=0" >> $GITHUB_OUTPUT
-            echo "non_us_count=0" >> $GITHUB_OUTPUT
-          fi
-
-      # ========== 清理膨胀文件 ==========
-      - name: 🧹 清理历史 Non-US 文件
-        run: |
-          if [ -d "non_us_ips" ]; then
-            cd non_us_ips
-            ls -t non_us_ips_*.txt 2>/dev/null | tail -n +11 | xargs -r rm --
-            echo "✅ 已清理旧的 Non‑US 文件，当前保留："
-            ls -1
-          fi
-
-      # ========== 变更检查 ==========
-      - name: 📊 检查文件变更
-        id: changes-check
-        run: |
-          echo "📊 检查文件变更..."
-          echo "🕐 检查时间(北京时间): $(date)"
-          if git diff --quiet HEAD -- ip.txt ipv6.txt non_us_ips/; then
-            echo "📭 未检测到文件变更"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "📬 检测到文件变更"
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "📝 变更文件:"
-            git diff --name-only HEAD -- ip.txt ipv6.txt non_us_ips/
-          fi
-
-      # ========== 提交变更 ==========
-      - name: 💾 提交并推送变更
-        id: auto-commit
-        if: steps.changes-check.outputs.has_changes == 'true'
+      - name: 💾 提交更新
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: |
-            chore: 更新IP地址 [自动]
-
-            • 触发类型: ${{ steps.debug.outputs.trigger_type }}
-            • 更新时间(北京时间): ${{ steps.timestamp.outputs.time }}
-            • 更新 ip.txt: ${{ steps.file-check.outputs.ip_count }} 个IPv4地址
-            • 更新 ipv6.txt: ${{ steps.file-check.outputs.ipv6_count }} 个IPv6地址
-            • 工作流: ${{ github.workflow }}
-          commit_user_name: '🤖 GitHub Actions 机器人'
-          commit_user_email: 'actions@users.noreply.github.com'
-          commit_options: '--signoff'
+            chore: 更新 IP 列表
+            • 触发：${{ steps.debug.outputs.trigger_type }}
+            • 时间：$(date '+%Y-%m-%d %H:%M:%S')
           file_pattern: 'ip.txt ipv6.txt non_us_ips/*'
           skip_fetch: true
-          skip_checkout: true
 
-      # ========== 工作流总结 ==========
-      - name: 📈 工作流总结
-        if: always()
+      - name: Keepalive，防止定时休眠
         run: |
-          echo "## 🎯 IP地址收集总结" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 执行详情" >> $GITHUB_STEP_SUMMARY
-          echo "- **触发方式:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **触发类型:** ${{ steps.debug.outputs.trigger_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **执行时间(北京时间):** ${{ steps.timestamp.outputs.time }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **UTC时间:** ${{ steps.timestamp.outputs.utc_time }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **仓库:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **分支:** ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "$(date '+%Y-%m-%d %H:%M:%S')" > .keepalive
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git commit -m "keepalive" || true
 
-          echo "### 📁 文件状态" >> $GITHUB_STEP_SUMMARY
-          echo "- **IPv4地址数量:** ${{ steps.file-check.outputs.ip_count }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **IPv6地址数量:** ${{ steps.file-check.outputs.ipv6_count }}" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
-            echo "- **非美国区域IP文件:** ${{ steps.file-check.outputs.non_us_files }} 个文件" >> $GITHUB_STEP_SUMMARY
-            echo "- **最新非美国IP文件:** ${{ steps.file-check.outputs.latest_non_us }}" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ steps.changes-check.outputs.has_changes }}" == "true" ]; then
-            echo "### ✅ 变更已提交" >> $GITHUB_STEP_SUMMARY
-            echo "IP地址文件已更新并自动提交。" >> $GITHUB_STEP_SUMMARY
-            if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
-              echo "📁 非美国区域IP文件已保存到仓库" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "### 📭 无变更" >> $GITHUB_STEP_SUMMARY
-            echo "IP地址文件已是最新版本。" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*由 GitHub Actions 自动生成 - 北京时间*" >> $GITHUB_STEP_SUMMARY
-
-      # ========== 通知 ==========
-      - name: 🎉 成功通知
-        if: success() && steps.changes-check.outputs.has_changes == 'true'
-        run: |
-          echo "🎉 成功更新IP地址！"
-          echo "📊 IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址"
-          echo "📊 IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址"
-          echo "🔧 触发类型: ${{ steps.debug.outputs.trigger_type }}"
-          echo "🕐 更新时间: ${{ steps.timestamp.outputs.time }}"
-          if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
-            echo "🌍 非美国区域IP: ${{ steps.file-check.outputs.non_us_files }} 个文件已保存"
-          fi
-
-      - name: ℹ️ 无变更通知
-        if: success() && steps.changes-check.outputs.has_changes == 'false'
-        run: |
-          echo "ℹ️ IP地址已是最新版本。"
-          echo "📊 当前IPv4: ${{ steps.file-check.outputs.ip_count }} 个地址"
-          echo "📊 当前IPv6: ${{ steps.file-check.outputs.ipv6_count }} 个地址"
-          echo "🔧 触发类型: ${{ steps.debug.outputs.trigger_type }}"
-          echo "🕐 检查时间: ${{ steps.timestamp.outputs.time }}"
-          if [ "${{ steps.file-check.outputs.non_us_files }}" != "0" ]; then
-            echo "📁 非美国区域IP文件: ${{ steps.file-check.outputs.non_us_files }} 个"
-          fi
-
-      # ========== 在全部跑完之后清理运行记录：只保留最近 5 条 ==========
-      - name: 🧹 清理旧工作流运行记录（后置）
-        if: always()
+  cleanup:
+    name: 🧹 清理旧运行记录
+    needs: collect
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: 删除旧 runs
         uses: Mattraks/delete-workflow-runs@v2
         with:
-          retain_days: ${{ env.RETAIN_DAYS }}
-          keep_minimum_runs: ${{ env.KEEP_MINIMUM_RUNS }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 5
