@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Cloudflare IP地址收集器 v3.1【修复完整版】
-新增：cdn-cgi/trace 连通预检，优先从 trace 获取国家码
-修复：trace 全失败兜底、随机UA、随机延迟、https预检、限流、重试、多 GeoIP 兜底、完善正则、blob 自动转 raw、官方段过滤
-适配 GitHub Actions 定时运行，对齐 yuanxiawan/cfipv4db 容错策略
+Cloudflare IP地址收集器 v3.1【Host伪装修复版】
+特性：伪装 Host 头预检、屏蔽 SSL 警告、全量兜底、自动去重
 """
 
 import requests
@@ -15,9 +13,13 @@ import random
 import ipaddress
 import json
 import traceback
+import urllib3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from datetime import datetime, timezone, timedelta
+
+# 屏蔽 requests 因为 verify=False 产生的警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -32,7 +34,7 @@ class CFIPCollector:
         self.load_urls_config(urls_config)
         self.load_main_config(main_config)
         self.setup_global_variables()
-        print("Cloudflare IP收集器 v3.1【修复完整版】初始化完成")
+        print("Cloudflare IP收集器 v3.1【Host伪装修复版】初始化完成")
 
     def get_beijing_time(self):
         return datetime.now(self.beijing_tz)
@@ -130,7 +132,7 @@ class CFIPCollector:
                 "remove_private_ips": True,
                 "remove_duplicates": True,
                 "filter_to_cf_range": True,
-                "enable_trace_check_v4": True,
+                "enable_trace_check_v4": True,  # 开启预检，但已带 Host 伪装
                 "enable_trace_check_v6": False
             },
             "progress_settings": {
@@ -172,17 +174,25 @@ class CFIPCollector:
             return any(ip_obj in net for net in self.cf_v6_nets)
 
     def trace_check(self, ip: str, is_v6: bool):
-        """cdn-cgi/trace 预检，成功返回 (True, country_code)，增加随机延时 + 随机UA + https"""
+        """利用伪装 Host 头 + 关闭证书校验进行 trace 预检"""
         req_cfg = self.config["request_settings"]
         time.sleep(random.uniform(*req_cfg["trace_random_delay"]))
-        headers = {"User-Agent": random.choice(UA_POOL)}
         timeout = req_cfg["trace_timeout"]
+        
+        target_domain = "www.wetest.vip" 
+        
         if is_v6:
             url = f"https://[{ip}]/cdn-cgi/trace"
         else:
             url = f"https://{ip}/cdn-cgi/trace"
+            
+        headers = {
+            "User-Agent": random.choice(UA_POOL),
+            "Host": target_domain
+        }
+        
         try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp = requests.get(url, headers=headers, timeout=timeout, verify=False)
             if resp.status_code == 200 and "loc=" in resp.text:
                 m = re.search(r"loc=([A-Z]{2})", resp.text)
                 cc = m.group(1) if m else "UNKNOWN"
@@ -198,7 +208,7 @@ class CFIPCollector:
         if not is_v6 and not flt.get("enable_trace_check_v4", True):
             return [(ip, None) for ip in ip_set]
 
-        print(f"\n🔎 开始 cdn-cgi/trace 预检，共 {len(ip_set)} 个 {'IPv6' if is_v6 else 'IPv4'}")
+        print(f"\n🔎 开始 cdn-cgi/trace 预检 (Host伪装)，共 {len(ip_set)} 个 {'IPv6' if is_v6 else 'IPv4'}")
         workers = self.config["request_settings"]["max_workers_trace"]
         passed = []
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -375,8 +385,14 @@ class CFIPCollector:
         return any(k.lower() in low for k in kw)
 
     def save_results_with_location(self, ip_results, filename, pure_filename, is_ipv6=False):
+        # 补全空文件保底逻辑
         if not ip_results:
+            with open(filename, "w", encoding="utf-8") as fp:
+                fp.write(f"# Cloudflare IP\n# 本次未收集到有效 {'IPv6' if is_ipv6 else 'IPv4'} 地址\n")
+            if self.config['output_settings'].get("save_pure_ip"):
+                open(pure_filename, "w").close()
             return [], []
+
         if is_ipv6:
             sorted_list = sorted(ip_results, key=lambda x: ipaddress.IPv6Address(x[0]))
         else:
@@ -454,7 +470,7 @@ class CFIPCollector:
 
     def main(self):
         print("=" * 50)
-        print("🌐 Cloudflare IP地址收集器 v3.1【修复完整版】")
+        print("🌐 Cloudflare IP地址收集器 v3.1【Host伪装修复版】")
         print("=" * 50)
         print(f"🕐 {self.get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')}")
         self.print_config_summary()
@@ -471,12 +487,19 @@ class CFIPCollector:
 
         nonus_v4, nonus_v6 = [], []
         out_cfg = self.config['output_settings']
+        
         if trace_v4:
             res_v4 = self.query_ips_parallel(trace_v4, False)
             _, nonus_v4 = self.save_results_with_location(res_v4, out_cfg['ipv4_filename'], out_cfg['pure_ipv4'], False)
+        else:
+            self.save_results_with_location([], out_cfg['ipv4_filename'], out_cfg['pure_ipv4'], False)
+
         if trace_v6:
             res_v6 = self.query_ips_parallel(trace_v6, True)
             _, nonus_v6 = self.save_results_with_location(res_v6, out_cfg['ipv6_filename'], out_cfg['pure_ipv6'], True)
+        else:
+            self.save_results_with_location([], out_cfg['ipv6_filename'], out_cfg['pure_ipv6'], True)
+
         self.save_non_us_ips(nonus_v4, nonus_v6)
         self.verify_results()
         print("\n" + "=" * 50)
