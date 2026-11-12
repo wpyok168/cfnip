@@ -19,7 +19,7 @@
    - 运行后会在当前目录生成/更新 `ip.txt` 和 `ipv6.txt` 文件。
 2. **自动化运行（推荐）**
 
-   - 本项目已配置 [GitHub Actions](.github/workflows/autoip6.yml)，每30分钟自动抓取并更新 IP 文件，无需手动操作。
+   - 本项目已配置 [GitHub Actions](.github/workflows/autoip6.yml)，每30分钟自动抓取并更新 IP 文件，无需手动操作。  
 
 输出文件说明
 ------------
