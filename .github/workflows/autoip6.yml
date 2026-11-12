@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Cloudflare IP地址收集器 v3.3.1【必须Bug修复版】
-修复：
-  #1 trace_check 多 SNI 轮换的全局配置污染 / 循环变量覆盖 / 连接池泄漏
-  #2 speed_test 异常路径连接池泄漏
-  #3 speed_test 排序键防御 None
-  #4 save_results_with_location 真正使用 render_line，template 生效
-  #5 save_speed_result 走 render_line
-  #6 verify_results 按文件名区分统计口径
-  #7 降级兜底补黑名单过滤
+Cloudflare IP地址收集器 v3.3.3
+变更汇总：
+  - 继承 v3.3.2：JSON 容错、BOM、注释、行列号报错
+  - trace / header 模式增加 server:cloudflare 校验，过滤伪造节点
+  - geo cache 增加线程锁，修复并发读写竞态
+  - geo 请求每次随机 UA，降低接口风控
+  - 测速字段语义修正：http → http_ttfb
+  - non_us_ips 自动清理旧快照，数量可配置
+  - 原有全部必修 bug：连接池泄漏、render_line、排序 None 防御、降级黑名单过滤等
 """
 
 import requests
@@ -61,14 +61,56 @@ CC_NAME_MAP = {
 }
 
 
+def _strip_json_comments(text: str) -> str:
+    out = []
+    i = 0
+    n = len(text)
+    in_string = False
+    escape = False
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '/' and i + 1 < n and text[i + 1] == '/':
+            while i < n and text[i] != '\n':
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return ''.join(out)
+
+
+def _load_json_lenient(path: str):
+    with open(path, 'r', encoding='utf-8-sig') as f:
+        raw = f.read()
+    if not raw.strip():
+        raise ValueError(f'{path} 是空文件')
+    cleaned = _strip_json_comments(raw)
+    return json.loads(cleaned)
+
+
 class CFIPCollector:
     def __init__(self, urls_config='urls.json', main_config='config.json'):
         self.beijing_tz = timezone(timedelta(hours=8))
         self.cache = dict()
+        self._cache_lock = threading.Lock()
         self.load_urls_config(urls_config)
         self.load_main_config(main_config)
         self.setup_global_variables()
-        print("Cloudflare IP收集器 v3.3.1【必须Bug修复版】初始化完成")
+        print("Cloudflare IP收集器 v3.3.3 初始化完成")
 
     def get_beijing_time(self):
         return datetime.now(self.beijing_tz)
@@ -79,51 +121,68 @@ class CFIPCollector:
         return url
 
     def load_urls_config(self, config_file):
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            raw_list = config.get('url_sources', [])
-            self.urls = [self._github_blob_to_raw(u.strip()) for u in raw_list if u.strip()]
-            print(f'✅ 已加载 {len(self.urls)} 个URL数据源')
-        except Exception:
+        default_list = [
+            'https://ip.164746.xyz',
+            'https://api.uouin.com/cloudflare.html',
+            'https://addressesapi.090227.xyz/CloudFlareYes',
+            'https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt',
+            'https://www.wetest.vip/page/cloudflare/address_v6.html',
+            'https://www.wetest.vip/page/cloudflare/address_v4.html',
+            'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/main/030101-bestcf.txt',
+            'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/main/wetest-cloudflare-v4.txt',
+            'https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/main/ipTop10.html',
+            'https://raw.githubusercontent.com/gslege/CloudflareIP/main/JP.txt',
+            'https://raw.githubusercontent.com/gslege/CloudflareIP/main/DE.txt',
+            'https://raw.githubusercontent.com/gslege/CloudflareIP/main/NL.txt',
+            'https://raw.githubusercontent.com/gslege/CloudflareIP/main/SG.txt',
+            'https://raw.githubusercontent.com/gslege/CloudflareIP/main/US.txt',
+            'https://raw.githubusercontent.com/camel52zhang/yxip/main/ip.txt',
+            'https://raw.githubusercontent.com/hubbylei/bestcf/main/bestcf.txt',
+            'https://raw.githubusercontent.com/minghe168/cfip-auto/main/full_ips.txt',
+            'https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cfip.txt',
+            'https://raw.githubusercontent.com/nyoungo/bestIp/main/best_ips.txt'
+        ]
+        raw_list = None
+        if os.path.exists(config_file):
+            try:
+                config = _load_json_lenient(config_file)
+                raw_list = config.get('url_sources', [])
+                print(f'✅ 已加载 {config_file}')
+            except json.JSONDecodeError as e:
+                print(f'❌ {config_file} JSON 解析失败: {e.msg} (第 {e.lineno} 行第 {e.colno} 列)')
+                lines = e.doc.splitlines()
+                if 1 <= e.lineno <= len(lines):
+                    print(f'   该行内容: {lines[e.lineno - 1]}')
+                print(f'   → 已自动回退到内置默认数据源')
+            except Exception as e:
+                print(f'❌ 读取 {config_file} 失败: {e}')
+                print(f'   → 已自动回退到内置默认数据源')
+        else:
             print(f'ℹ️ 未找到 {config_file}，使用内置默认数据源')
-            raw_list = [
-                'https://ip.164746.xyz',
-                'https://api.uouin.com/cloudflare.html',
-                'https://addressesapi.090227.xyz/CloudFlareYes',
-                'https://raw.githubusercontent.com/ymyuuu/IPDB/main/BestCF/bestcfv4.txt',
-                'https://www.wetest.vip/page/cloudflare/address_v6.html',
-                'https://www.wetest.vip/page/cloudflare/address_v4.html',
-                'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/main/030101-bestcf.txt',
-                'https://raw.githubusercontent.com/crow1874/CF-DNS-Clone/main/wetest-cloudflare-v4.txt',
-                'https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/main/ipTop10.html',
-                'https://raw.githubusercontent.com/gslege/CloudflareIP/main/JP.txt',
-                'https://raw.githubusercontent.com/gslege/CloudflareIP/main/DE.txt',
-                'https://raw.githubusercontent.com/gslege/CloudflareIP/main/NL.txt',
-                'https://raw.githubusercontent.com/gslege/CloudflareIP/main/SG.txt',
-                'https://raw.githubusercontent.com/gslege/CloudflareIP/main/US.txt',
-                'https://raw.githubusercontent.com/camel52zhang/yxip/main/ip.txt',
-                'https://raw.githubusercontent.com/hubbylei/bestcf/main/bestcf.txt',
-                'https://raw.githubusercontent.com/minghe168/cfip-auto/main/full_ips.txt',
-                'https://raw.githubusercontent.com/yuanxiawan/cfipv4db/main/cfip.txt',
-                'https://raw.githubusercontent.com/nyoungo/bestIp/main/best_ips.txt'
-            ]
-            self.urls = [self._github_blob_to_raw(u.strip()) for u in raw_list if u.strip()]
+        if raw_list is None:
+            raw_list = default_list
+        self.urls = [self._github_blob_to_raw(u.strip()) for u in raw_list if isinstance(u, str) and u.strip()]
+        print(f'📡 共 {len(self.urls)} 个数据源')
 
     def load_main_config(self, config_file):
-        def strip_json_comments(text: str):
-            lines = []
-            for line in text.splitlines():
-                if not line.strip().startswith("//"):
-                    lines.append(line)
-            return "\n".join(lines)
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                cleaned = strip_json_comments(f.read())
-                self.config = json.loads(cleaned)
-            print('✅ 主配置文件加载成功')
-        except Exception:
+        loaded = False
+        if os.path.exists(config_file):
+            try:
+                self.config = _load_json_lenient(config_file)
+                loaded = True
+                print(f'✅ 主配置 {config_file} 加载成功')
+            except json.JSONDecodeError as e:
+                print(f'❌ {config_file} JSON 解析失败: {e.msg} (第 {e.lineno} 行第 {e.colno} 列)')
+                lines = e.doc.splitlines()
+                if 1 <= e.lineno <= len(lines):
+                    print(f'   该行内容: {lines[e.lineno - 1]}')
+                print(f'   → 已自动回退到内置默认配置')
+            except Exception as e:
+                print(f'❌ 读取 {config_file} 失败: {e}')
+                print(f'   → 已自动回退到内置默认配置')
+        else:
             print(f'ℹ️ 未找到 {config_file}，启用内置默认配置')
+        if not loaded:
             self.set_default_config()
 
     def set_default_config(self):
@@ -165,6 +224,7 @@ class CFIPCollector:
                 "speed_v4": "speed_v4.txt",
                 "speed_v6": "speed_v6.txt",
                 "non_us_folder": "non_us_ips",
+                "non_us_keep_snapshots": 10,
                 "port": 8443,
                 "save_all_ips": True,
                 "save_non_us_separately": True,
@@ -219,7 +279,7 @@ class CFIPCollector:
             "2c0f:f248::/32"
         ]]
         self.blacklist_nets = []
-        for cidr in self.config["filter_settings"]["blacklist_cidrs"]:
+        for cidr in self.config["filter_settings"].get("blacklist_cidrs", []):
             try:
                 self.blacklist_nets.append(ipaddress.ip_network(cidr, strict=False))
             except Exception:
@@ -249,7 +309,6 @@ class CFIPCollector:
         )
         return pool, domain
 
-    # ============ 修复 #1：多 SNI 轮换 ============
     def trace_check(self, ip: str, is_v6: bool):
         tr = self.config["trace_settings"]
         if not tr.get("enabled", True):
@@ -259,7 +318,6 @@ class CFIPCollector:
         mode = tr.get("mode", "trace")
         path = tr["trace_path"] if mode == "trace" else tr["header_path"]
 
-        # 复制一份再打乱，避免污染 self.config 且避免多线程数据竞争
         domains = list(tr["sni_domains"])
         random.shuffle(domains)
 
@@ -276,15 +334,16 @@ class CFIPCollector:
                 status = resp.status
                 body = resp.data.decode("utf-8", "ignore") if resp.data else ""
                 resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+                server = resp_headers.get("server", "")
 
                 if mode == "trace":
-                    if status == 200 and "loc=" in body:
+                    if status == 200 and "loc=" in body and server == "cloudflare":
                         m = re.search(r"loc=([A-Z]{2})", body)
                         cc = m.group(1) if m else None
                         return True, cc
                 else:
                     cf_ray = resp_headers.get("cf-ray", "")
-                    if status in (200, 301, 302, 403) and cf_ray:
+                    if status in (200, 301, 302, 403) and cf_ray and server == "cloudflare":
                         colo = cf_ray.rsplit("-", 1)[-1].upper()
                         if len(colo) == 3:
                             return True, colo
@@ -299,7 +358,6 @@ class CFIPCollector:
                         pass
         return False, None
 
-    # ============ 修复 #2 / #3：speed_test 连接池泄漏 + 排序键防御 ============
     def speed_test(self, ip: str, is_v6: bool):
         sp = self.config["speed_settings"]
         if not sp["enabled"]:
@@ -324,13 +382,13 @@ class CFIPCollector:
         try:
             pool, _ = self._build_pool(ip, is_v6, domain)
             t0 = time.perf_counter()
-            resp = pool.request("GET", sp["test_path"],
-                                headers={"Host": domain},
-                                redirect=False, retries=False)
+            pool.request("GET", sp["test_path"],
+                         headers={"Host": domain},
+                         redirect=False, retries=False)
             http_rtt = (time.perf_counter() - t0) * 1000
-            return {"tcp": round(tcp_rtt, 2), "http": round(http_rtt, 2)}
+            return {"tcp": round(tcp_rtt, 2), "http_ttfb": round(http_rtt, 2)}
         except Exception:
-            return {"tcp": round(tcp_rtt, 2), "http": None}
+            return {"tcp": round(tcp_rtt, 2), "http_ttfb": None}
         finally:
             if pool is not None:
                 try:
@@ -338,7 +396,6 @@ class CFIPCollector:
                 except Exception:
                     pass
 
-    # ============ 修复 #7：降级兜底补黑名单过滤 ============
     def run_trace_filter(self, ip_set, is_v6: bool):
         flt = self.config["filter_settings"]
         if is_v6 and not flt.get("enable_trace_check_v6", False):
@@ -389,10 +446,24 @@ class CFIPCollector:
                 r = f.result()
                 if r and r.get("tcp") is not None:
                     res.append((ip, r))
-        # 修复 #3：排序键用 (tcp, http or inf) 防御 None
-        res.sort(key=lambda x: (x[1]["tcp"], x[1]["http"] if x[1]["http"] is not None else float("inf")))
+        res.sort(key=lambda x: (x[1]["tcp"], x[1]["http_ttfb"] if x[1]["http_ttfb"] is not None else float("inf")))
         top_n = self.config["speed_settings"]["top_n"]
         return res[:top_n]
+
+    def clean_old_non_us_files(self):
+        folder = self.config['output_settings']['non_us_folder']
+        keep = self.config['output_settings'].get("non_us_keep_snapshots", 10)
+        if not os.path.isdir(folder):
+            return
+        files = []
+        for name in os.listdir(folder):
+            p = os.path.join(folder, name)
+            if os.path.isfile(p) and name.startswith("non_us_ips_"):
+                files.append((os.path.getmtime(p), p))
+        files.sort(reverse=True)
+        for _, p in files[keep:]:
+            os.remove(p)
+            print(f"🗑️ 清理过期 non-us 文件: {p}")
 
     def ensure_folders(self):
         non_us_folder = self.config['output_settings']['non_us_folder']
@@ -466,30 +537,36 @@ class CFIPCollector:
                 name = CC_NAME_MAP[pre_cc]
             else:
                 name = pre_cc
-            self.cache[ip] = name
-            return self.cache[ip], True
+            with self._cache_lock:
+                self.cache[ip] = name
+            return name, True
 
         if not loc_cfg['enable_location_query']:
             return "未知", False
-        if loc_cfg['use_cache'] and ip in self.cache:
-            return self.cache[ip], True
+        if loc_cfg['use_cache']:
+            with self._cache_lock:
+                if ip in self.cache:
+                    return self.cache[ip], True
 
+        h = {"User-Agent": random.choice(UA_POOL)}
         try:
             url = f"{loc_cfg['baidu_api_url']}?co=&resource_id=6006&oe=utf8&query={ip}"
-            r = requests.get(url, headers=self.headers, timeout=5)
+            r = requests.get(url, headers=h, timeout=5)
             j = r.json()
             if j.get("status") == "0" and j.get("data"):
                 loc = j["data"][0].get("location", "未知")
                 if loc != "未知":
-                    self.cache[ip] = loc
+                    with self._cache_lock:
+                        self.cache[ip] = loc
                     return loc, True
         except Exception:
             pass
         try:
-            r = requests.get(loc_cfg['fallback_api'] + ip, headers=self.headers, timeout=5)
+            r = requests.get(loc_cfg['fallback_api'] + ip, headers=h, timeout=5)
             j = r.json()
             loc = j.get("country", "未知")
-            self.cache[ip] = loc
+            with self._cache_lock:
+                self.cache[ip] = loc
             return loc, True
         except Exception:
             pass
@@ -580,7 +657,6 @@ class CFIPCollector:
         else:
             return ip
 
-    # ============ 修复 #4：save_results_with_location 走 render_line ============
     def save_results_with_location(self, ip_results, filename, pure_filename, is_ipv6=False):
         if not ip_results:
             with open(filename, "w", encoding="utf-8") as fp:
@@ -597,7 +673,7 @@ class CFIPCollector:
         t = self.get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')
         for ip, loc in sorted_list:
             pure_lines.append(ip)
-            line = self.render_line(ip, loc, is_ipv6)  # ✅ template 生效
+            line = self.render_line(ip, loc, is_ipv6)
             all_lines.append(line)
             if self.is_us_location(loc):
                 us_lines.append(line)
@@ -614,10 +690,8 @@ class CFIPCollector:
         print(f'💾 {filename} | 总数 {len(all_lines)} US:{len(us_lines)} NonUS:{len(nonus_lines)}')
         return us_lines, nonus_lines
 
-    # ============ 修复 #5：save_speed_result 走 render_line ============
     def save_speed_result(self, speed_list, filename, is_ipv6):
         if not speed_list:
-            # 与 save_results_with_location 的空文件兜底保持一致
             with open(filename, "w", encoding="utf-8") as fp:
                 fp.write(f"# Speed sorted by TCP RTT\n# 本次未收集到有效 {'IPv6' if is_ipv6 else 'IPv4'} 地址\n")
             return
@@ -626,9 +700,9 @@ class CFIPCollector:
             fp.write(f"# Speed sorted by TCP RTT, {t}\n")
             fp.write(f"# {'IPv6' if is_ipv6 else 'IPv4'}\n\n")
             for ip, metric in speed_list:
-                line = self.render_line(ip, "speed", is_ipv6)  # ✅ template 生效
-                http = metric["http"] if metric["http"] is not None else "N/A"
-                fp.write(f"{line}  # tcp={metric['tcp']}ms http={http}ms\n")
+                line = self.render_line(ip, "speed", is_ipv6)
+                httpttfb = metric["http_ttfb"] if metric["http_ttfb"] is not None else "N/A"
+                fp.write(f"{line}  # tcp={metric['tcp']}ms http_ttfb={httpttfb}ms\n")
         print(f"💾 测速结果保存：{filename}")
 
     def save_non_us_ips(self, nonus_v4, nonus_v6):
@@ -649,11 +723,9 @@ class CFIPCollector:
         print(f'💾 非美国 IP: {fn}')
         return fn
 
-    # ============ 修复 #6：verify_results 按口径统计 ============
     def verify_results(self):
         out = self.config['output_settings']
         print("\n🔍 文件校验")
-        # speed 文件允许行尾 # 注释，统计时去掉注释再判断
         speed_files = {out.get('speed_v4'), out.get('speed_v6')}
         for f in [out['ipv4_filename'], out['ipv6_filename'], out.get('speed_v4'), out.get('speed_v6')]:
             if not f or not os.path.exists(f):
@@ -684,6 +756,7 @@ class CFIPCollector:
     def print_config_summary(self):
         tr = self.config['trace_settings']
         sp = self.config['speed_settings']
+        out = self.config['output_settings']
         print("\n📋 配置摘要")
         print(f"  • 数据源 {len(self.urls)}")
         print(f"  • 地理位置查询 {'开启' if self.config['location_settings']['enable_location_query'] else '关闭'}")
@@ -692,11 +765,12 @@ class CFIPCollector:
         print(f"  • SNI 模式 {tr['mode']} | 轮换域名: {tr['sni_domains']}")
         print(f"  • trace 并发 {self.config['request_settings']['max_workers_trace']}")
         print(f"  • 测速 {'开启' if sp['enabled'] else '关闭'}, top {sp['top_n']}")
+        print(f"  • non-us 快照保留: {out.get('non_us_keep_snapshots', 10)}")
         print(f"  • 输出模板: {self.config['output_settings']['template']}")
 
     def main(self):
         print("=" * 50)
-        print("🌐 Cloudflare IP地址收集器 v3.3.1【必须Bug修复版】")
+        print("🌐 Cloudflare IP地址收集器 v3.3.3")
         print("=" * 50)
         print(f"🕐 {self.get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')}")
         self.print_config_summary()
@@ -705,6 +779,7 @@ class CFIPCollector:
         self.test_geo_api()
         print("\n" + "=" * 30)
         self.clean_old_files()
+        self.clean_old_non_us_files()
         v4_set, v6_set = self.process_urls_parallel()
         print(f"\n🎉 初步收集: IPv4 {len(v4_set)} | IPv6 {len(v6_set)}")
 
@@ -729,7 +804,7 @@ class CFIPCollector:
             res_v6 = self.query_ips_parallel(trace_v6, True)
             _, nonus_v6 = self.save_results_with_location(res_v6, out_cfg['ipv6_filename'], out_cfg['pure_ipv6'], True)
         else:
-            self.save_results_with_location([], out_cfg['ipv6_filename'], out_cfg['pure_ipv6'], True)
+            self.save_results_with_location([], out_cfg['ipv6_filename'], out_cfg['pure_ipv6'], False)
 
         self.save_non_us_ips(nonus_v4, nonus_v6)
         self.verify_results()
