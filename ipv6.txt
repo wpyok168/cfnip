@@ -1,21 +1,21 @@
 # Cloudflare IP
-# 生成时间 2026-11-12 19:35:41
+# 生成时间 2026-11-12 19:41:58
 # IPv6
-# 总数 23 US:9 NonUS:14
+# 总数 23 US:8 NonUS:15
 
 [2606:4700:4403::]:8443#未知-IPV6
-[2606:4700:440a::]:8443#United States-IPV6
-[2606:4700:4700::]:8443#United States-IPV6
-[2606:4700:8d71::]:8443#United States-IPV6
-[2606:4700:9a62::]:8443#United States-IPV6
-[2606:4700:9ad2::]:8443#United States-IPV6
-[2606:4700:9ae2::]:8443#United States-IPV6
-[2606:4700:9ae4::]:8443#United States-IPV6
-[2606:4700:9c61::]:8443#United States-IPV6
+[2606:4700:440e::]:8443#未知-IPV6
+[2606:4700:8390::]:8443#United States-IPV6
+[2606:4700:91b1::]:8443#United States-IPV6
+[2606:4700:91b4::]:8443#United States-IPV6
+[2606:4700:9640::]:8443#United States-IPV6
+[2606:4700:9a91::]:8443#United States-IPV6
+[2606:4700:9b02::]:8443#United States-IPV6
 [2606:4700:9c63::]:8443#United States-IPV6
-[2a06:98c1:4f::]:8443#未知-IPV6
+[2606:4700:9c66::]:8443#United States-IPV6
 [2a06:98c1:3102::]:8443#未知-IPV6
-[2a06:98c1:3107::]:8443#未知-IPV6
+[2a06:98c1:3103::]:8443#未知-IPV6
+[2a06:98c1:310a::]:8443#未知-IPV6
 [2a06:98c1:3120:c39b:f77:4fc1:b18b:c12]:8443#未知-IPV6
 [2a06:98c1:3120:c39b:7522:c680:d288:d13c]:8443#未知-IPV6
 [2a06:98c1:3121:0:ef18:6ab0:b648:d756]:8443#未知-IPV6
