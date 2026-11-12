@@ -2,7 +2,7 @@ name: 🌐 收集IP地址并保存到文件
 
 on:
   schedule:
-    - cron: '0/30 * * * *'   # 主要调度：每30分钟运行（北京时间）
+    - cron: '7,37 * * * *'   # 主要调度：每30分钟运行（北京时间）
  #     timezone: 'Asia/Shanghai'    
  #   - cron: '0 * * * *'    # 备用调度：每小时的0分钟运行（北京时间整点）
   workflow_dispatch:        # 允许手动触发
