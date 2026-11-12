@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       trigger_type: ${{ steps.debug.outputs.trigger_type }}
+      run_time: ${{ steps.debug.outputs.run_at }}
     steps:
       - name: 🕐 设置时区
         run: sudo timedatectl set-timezone Asia/Shanghai
@@ -43,7 +44,9 @@ jobs:
           else
             echo "trigger_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
           fi
-          echo "run_at=$(date '+%Y-%m-%d %H:%M:%S')"
+          rt=$(date '+%Y-%m-%d %H:%M:%S')
+          echo "run_at=$rt" >> $GITHUB_OUTPUT
+          echo "run_at_cst=$rt" >> $GITHUB_OUTPUT
 
       - name: 📥 检出代码
         uses: actions/checkout@v4
@@ -68,44 +71,79 @@ jobs:
       - name: ✅ 校验输出文件
         id: file-check
         run: |
-          if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
-            echo "ok=1" >> $GITHUB_OUTPUT
+          ok="1"
+          if [ ! -f "ip.txt" ] || [ ! -s "ip.txt" ]; then ok="0"; fi
+          if [ ! -f "ipv6.txt" ] || [ ! -s "ipv6.txt" ]; then ok="0"; fi
+          echo "ok=$ok" >> $GITHUB_OUTPUT
+          if [[ "$ok" == "0" ]]; then exit 1; fi
+
+          ipc=$(wc -l < ip.txt | tr -d ' ')
+          ip6c=$(wc -l < ipv6.txt | tr -d ' ')
+          echo "ipv4_count=$ipc" >> $GITHUB_OUTPUT
+          echo "ipv6_count=$ip6c" >> $GITHUB_OUTPUT
+
+      - name: 💓 写入心跳文件（每次必写）
+        id: heartbeat-write
+        run: |
+          cat > heartbeat.txt <<EOF
+          last_run_cst = ${{ steps.debug.outputs.run_at }}
+          trigger_type = ${{ steps.debug.outputs.trigger_type }}
+          ipv4 = ${{ steps.file-check.outputs.ipv4_count }}
+          ipv6 = ${{ steps.file-check.outputs.ipv6_count }}
+          EOF
+
+      - name: 🔎 判断是否有 IP 变更
+        id: diff-check
+        run: |
+          if git diff --quiet HEAD -- ip.txt ipv6.txt non_us_ips/; then
+            echo "ip_changed=false" >> $GITHUB_OUTPUT
           else
-            echo "ok=0" >> $GITHUB_OUTPUT
-            exit 1
+            echo "ip_changed=true" >> $GITHUB_OUTPUT
           fi
 
       - name: 💾 提交更新
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: |
-            chore: 更新 IP 列表
+            ${{ steps.diff-check.outputs.ip_changed == 'true' && 'chore: 更新 IP 列表 [自动]' || 'chore: 心跳 [heartbeat only]' }}
             • 触发：${{ steps.debug.outputs.trigger_type }}
-            • 时间：$(date '+%Y-%m-%d %H:%M:%S')
-          file_pattern: 'ip.txt ipv6.txt non_us_ips/*'
+            • 时间：${{ steps.debug.outputs.run_at }}
+            ${{ steps.diff-check.outputs.ip_changed == 'true' && '• IPv4：' || '' }}${{ steps.diff-check.outputs.ip_changed == 'true' && steps.file-check.outputs.ipv4_count || '' }}${{ steps.diff-check.outputs.ip_changed == 'true' && ' 个' || '' }}
+            ${{ steps.diff-check.outputs.ip_changed == 'true' && '• IPv6：' || '' }}${{ steps.diff-check.outputs.ip_changed == 'true' && steps.file-check.outputs.ipv6_count || '' }}${{ steps.diff-check.outputs.ip_changed == 'true' && ' 个' || '' }}
+          file_pattern: 'ip.txt ipv6.txt non_us_ips/* heartbeat.txt'
           skip_fetch: true
+          commit_user_name: "🤖 GitHub Actions 机器人"
+          commit_user_email: "actions@users.noreply.github.com"
+          commit_options: '--signoff'
 
-      - name: Keepalive，防止定时休眠
+      - name: 📄 生成运行摘要
+        if: always()
         run: |
-          echo "$(date '+%Y-%m-%d %H:%M:%S')" > .keepalive
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add .keepalive
-          git commit -m "keepalive" || true
+          echo "## 📝 本次运行结果" >> $GITHUB_STEP_SUMMARY
+          echo "- **触发方式**: ${{ steps.debug.outputs.trigger_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **北京时间**: ${{ steps.debug.outputs.run_at }}" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ steps.diff-check.outputs.ip_changed }}" == "true" ]]; then
+            echo "- ✅ IP 池发生更新，已提交" >> $GITHUB_STEP_SUMMARY
+            echo "- IPv4：${{ steps.file-check.outputs.ipv4_count }}" >> $GITHUB_STEP_SUMMARY
+            echo "- IPv6：${{ steps.file-check.outputs.ipv6_count }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- 💓 心跳正常，IP 池无变化" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- 心跳记录：heartbeat.txt" >> $GITHUB_STEP_SUMMARY
 
-  cleanup:
-    name: 🧹 清理旧运行记录
-    needs: collect
-    runs-on: ubuntu-latest
-    if: always()
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: 删除旧 runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 0
-          keep_minimum_runs: 5
+    cleanup:
+      name: 🧹 清理旧运行记录
+      needs: collect
+      runs-on: ubuntu-latest
+      if: always()
+      permissions:
+        actions: write
+        contents: read
+      steps:
+        - name: 删除旧 runs
+          uses: Mattraks/delete-workflow-runs@v2
+          with:
+            token: ${{ secrets.GITHUB_TOKEN }}
+            repository: ${{ github.repository }}
+            retain_days: 3
+            keep_minimum_runs: 5
