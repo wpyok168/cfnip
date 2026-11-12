@@ -97,15 +97,15 @@ class CFIPCollector:
             "request_settings": {
                 "timeout": 10,
                 "user_agent": random.choice(UA_POOL),
-                "max_workers_url": 3,
-                "max_workers_ipv4": 4,
-                "max_workers_ipv6": 3,
-                "max_workers_trace": 3,
+                "max_workers_url": 10,
+                "max_workers_ipv4": 10,
+                "max_workers_ipv6": 6,
+                "max_workers_trace": 5,
                 "retry_times": 2,
-                "retry_delay": 1,
-                "geo_delay": 0.8,
-                "trace_timeout": 10,
-                "trace_random_delay": [0.5, 1.5]
+                "retry_delay": 2,
+                "geo_delay": 0.2,
+                "trace_timeout": 8,
+                "trace_random_delay": [0.2, 0.6]
             },
             "output_settings": {
                 "ipv4_filename": "ip.txt",
