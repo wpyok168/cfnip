@@ -178,7 +178,8 @@ class CFIPCollector:
         req_cfg = self.config["request_settings"]
         time.sleep(random.uniform(*req_cfg["trace_random_delay"]))
         timeout = req_cfg["trace_timeout"]
-        
+
+        # 伪装host cf.xiu2.xyz   www.wetest.vip   www.digitalocean.com    discord.com
         target_domain = "www.wetest.vip" 
         
         if is_v6:
