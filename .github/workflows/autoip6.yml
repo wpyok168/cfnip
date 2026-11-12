@@ -1,4 +1,4 @@
-name: 收集 IP 地址并保存到文件
+name: 收集IP地址并保存到文件
 on:
   schedule:
     - cron: '7,37 0-15 * * *'
@@ -29,131 +29,78 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       trigger_type: ${{ steps.debug.outputs.trigger_type }}
-      run_at: ${{ steps.debug.outputs.run_at }}
     steps:
-      - name: 🕐 设置时区为中国标准时间
+      - name: 🕐 设置时区
         run: sudo timedatectl set-timezone Asia/Shanghai
 
-      - name: 🔍 获取触发类型与时间戳
+      - name: 🔍 调试触发信息
         id: debug
         run: |
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            trigger="scheduled"
+            echo "trigger_type=scheduled" >> $GITHUB_OUTPUT
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            trigger="manual"
+            echo "trigger_type=manual" >> $GITHUB_OUTPUT
           else
-            trigger="${{ github.event_name }}"
+            echo "trigger_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
           fi
-          rt=$(date '+%Y-%m-%d %H:%M:%S')
-          echo "trigger_type=$trigger" >> $GITHUB_OUTPUT
-          echo "run_at=$rt" >> $GITHUB_OUTPUT
-
-      - name: 📥 检出仓库代码
+          echo "run_at=$(date '+%Y-%m-%d %H:%M:%S')"
+      - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 🐍 加载 Python ${{ env.PYTHON_VERSION }}
+      - name: 🐍 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: 📦 更新 pip 并安装依赖
+      - name: 📦 安装依赖
         run: |
           python -m pip install --upgrade pip
           pip install requests
-
-      - name: 🧪 运行 IP 采集脚本
+      - name: 🧪 运行采集脚本
         id: ip-run
         timeout-minutes: 20
         run: |
           set -e
           python autoip6-0.py
-
-      - name: ✅ 校验输出文件并统计行数
+      - name: ✅ 校验输出文件
         id: file-check
         run: |
-          ok="1"
-          if [ ! -f "ip.txt" ] || [ ! -s "ip.txt" ]; then ok="0"; fi
-          if [ ! -f "ipv6.txt" ] || [ ! -s "ipv6.txt" ]; then ok="0"; fi
-
-          if [[ "$ok" == "0" ]]; then
-            echo "❌ ip.txt / ipv6.txt 文件缺失或为空"
+          if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
+            echo "ok=1" >> $GITHUB_OUTPUT
+          else
+            echo "ok=0" >> $GITHUB_OUTPUT
             exit 1
           fi
-
-          ipv4_cnt=$(wc -l < ip.txt | tr -d ' ')
-          ipv6_cnt=$(wc -l < ipv6.txt | tr -d ' ')
-
-          echo "ok=$ok" >> $GITHUB_OUTPUT
-          echo "ipv4_count=$ipv4_cnt" >> $GITHUB_OUTPUT
-          echo "ipv6_count=$ipv6_cnt" >> $GITHUB_OUTPUT
-
-      - name: 💓 更新心跳记录
-        id: heartbeat-write
-        run: |
-          cat > heartbeat.txt <<EOF
-          last_run_cst  = ${{ steps.debug.outputs.run_at }}
-          trigger_type  = ${{ steps.debug.outputs.trigger_type }}
-          ipv4_count    = ${{ steps.file-check.outputs.ipv4_count }}
-          ipv6_count    = ${{ steps.file-check.outputs.ipv6_count }}
-          EOF
-
-      - name: 🔎 检测 IP 清单是否发生变更
-        id: diff-check
-        run: |
-          if git diff --quiet HEAD -- ip.txt ipv6.txt non_us_ips/; then
-            echo "ip_changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "ip_changed=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: 💾 提交并推送变更
+      - name: 💾 提交更新
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: |
-            ${{ steps.diff-check.outputs.ip_changed == 'true' && 'chore: 更新 IP 列表 [自动]' || 'chore: 心跳 [heartbeat only]' }}
-            ├─ 触发来源：${{ steps.debug.outputs.trigger_type }}
-            ├─ 运行时间：${{ steps.debug.outputs.run_at }}
-            ${{ steps.diff-check.outputs.ip_changed == 'true' && '├─ IPv4 数量：' || '' }}${{ steps.diff-check.outputs.ip_changed == 'true' && steps.file-check.outputs.ipv4_count || '' }}
-            ${{ steps.diff-check.outputs.ip_changed == 'true' && '└─ IPv6 数量：' || '' }}${{ steps.diff-check.outputs.ip_changed == 'true' && steps.file-check.outputs.ipv6_count || '' }}
-          file_pattern: 'ip.txt ipv6.txt non_us_ips/* heartbeat.txt'
+            chore: 更新 IP 列表
+            • 触发：${{ steps.debug.outputs.trigger_type }}
+            • 时间：$(date '+%Y-%m-%d %H:%M:%S')
+          file_pattern: 'ip.txt ipv6.txt non_us_ips/*'
           skip_fetch: true
-          commit_user_name: "🤖 IP Collector Bot"
-          commit_user_email: "actions@users.noreply.github.com"
-          commit_options: '--signoff'
 
-      - name: 📄 生成运行摘要
-        if: always()
+      - name: Keepalive，防止定时休眠
         run: |
-          echo "## 📝 本次运行报告" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "- **触发方式：** `${{ steps.debug.outputs.trigger_type }}`" >> $GITHUB_STEP_SUMMARY
-          echo "- **北京时间：** `${{ steps.debug.outputs.run_at }}`" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-
-          if [[ "${{ steps.diff-check.outputs.ip_changed }}" == "true" ]]; then
-            echo "- ✅ **IP 清单已更新**" >> $GITHUB_STEP_SUMMARY
-            echo "- IPv4：${{ steps.file-check.outputs.ipv4_count }} 条" >> $GITHUB_STEP_SUMMARY
-            echo "- IPv6：${{ steps.file-check.outputs.ipv6_count }} 条" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- 💓 **心跳正常，IP 清单无变动**" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "- 心跳记录：`heartbeat.txt`" >> $GITHUB_STEP_SUMMARY
-
-      cleanup:
-      name: 🧹 清理过期运行记录
-      needs: collect
-      runs-on: ubuntu-latest
-      if: always()
-      permissions:
-        actions: write
-        contents: read
-      steps:
-        - name: 删除旧的 workflow runs
-          uses: Mattraks/delete-workflow-runs@v2
-          with:
-            token: ${{ secrets.GITHUB_TOKEN }}
-            repository: ${{ github.repository }}
-            retain_days: 3
-            keep_minimum_runs: 5
+          echo "$(date '+%Y-%m-%d %H:%M:%S')" > .keepalive
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git commit -m "keepalive" || true
+  cleanup:
+    name: 🧹 清理旧运行记录
+    needs: collect
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: 删除旧 runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 5
