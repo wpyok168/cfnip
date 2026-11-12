@@ -15,7 +15,7 @@ on:
     branches: [ main, master ]
     paths:
       - '.github/workflows/**'
-      - 'autoip6.py'
+      - 'autoip6-0.py'
       - 'scripts/**'
   pull_request:            # PR时触发（测试用）
     branches: [ main, master ]
