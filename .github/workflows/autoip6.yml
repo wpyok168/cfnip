@@ -17,7 +17,7 @@ on:
       - 'autoip6-0.py'
 
 env:
-  PYTHON_VERSION: '3.12'
+  PYTHON_VERSION: '3.x'
   TZ: 'Asia/Shanghai'
 
 permissions:
@@ -75,9 +75,16 @@ jobs:
             exit 1
           fi
 
-      - name: ❤️ 写入心跳日志（追加）
+      - name: ❤️ 强制写入心跳日志
+        if: always()
         run: |
-          echo "[${{ steps.debug.outputs.run_at }}] trigger=${{ steps.debug.outputs.trigger_type }} collect_ok=${{ steps.file-check.outputs.ok }}" >> heartbeat.log
+          NOW=$(date '+%Y-%m-%d %H:%M:%S')
+          TRIGGER="${{ steps.debug.outputs.trigger_type }}"
+          OK="0"
+          if [[ "${{ steps.file-check.outputs.ok }}" == "1" ]]; then
+            OK="1"
+          fi
+          echo "[$NOW] trigger=${TRIGGER} collect_ok=${OK}" >> heartbeat.log
 
       - name: 💾 提交更新
         uses: stefanzweifel/git-auto-commit-action@v5
