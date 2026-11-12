@@ -1,8 +1,8 @@
-name: 收集IP地址并保存到文件
+name: 🟢 收集IP地址并保存到文件
 on:
   schedule:
-    - cron: '7,37 0-15 * * *'
-    - cron: '7,37 16-23 * * *'
+    # UTC，对应北京时间每小时 07 / 37
+    - cron: '07,37 * * * *'
   workflow_dispatch:
   push:
     branches: [ main, master ]
@@ -10,6 +10,12 @@ on:
       - '.github/workflows/**'
       - 'autoip6-0.py'
       - 'scripts/**'
+    paths-ignore:
+      - 'ip.txt'
+      - 'ipv6.txt'
+      - 'non_us_ips/**'
+      - 'heartbeat.log'
+      - '.keepalive'
   pull_request:
     branches: [ main, master ]
     paths:
@@ -17,7 +23,7 @@ on:
       - 'autoip6-0.py'
 
 env:
-  PYTHON_VERSION: '3.x'
+  PYTHON_VERSION: '3.12'
   TZ: 'Asia/Shanghai'
 
 permissions:
@@ -29,6 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       trigger_type: ${{ steps.debug.outputs.trigger_type }}
+      run_at: ${{ steps.debug.outputs.run_at }}
     steps:
       - name: 🕐 设置时区
         run: sudo timedatectl set-timezone Asia/Shanghai
@@ -43,7 +50,7 @@ jobs:
           else
             echo "trigger_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
           fi
-          echo "run_at=$(date '+%Y-%m-%d %H:%M:%S')"
+          echo "run_at=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
       - name: 📥 检出代码
         uses: actions/checkout@v4
@@ -67,42 +74,33 @@ jobs:
 
       - name: ✅ 校验输出文件
         id: file-check
+        if: always()
         run: |
           if [ -f "ip.txt" ] && [ -s "ip.txt" ]; then
             echo "ok=1" >> $GITHUB_OUTPUT
           else
             echo "ok=0" >> $GITHUB_OUTPUT
-            exit 1
           fi
 
-      - name: ❤️ 强制写入心跳日志
+      - name: ❤️ 写入心跳日志 & Keepalive
+        id: heartbeat
         if: always()
         run: |
           NOW=$(date '+%Y-%m-%d %H:%M:%S')
           TRIGGER="${{ steps.debug.outputs.trigger_type }}"
-          OK="0"
-          if [[ "${{ steps.file-check.outputs.ok }}" == "1" ]]; then
-            OK="1"
-          fi
+          OK="${{ steps.file-check.outputs.ok }}"
           echo "[$NOW] trigger=${TRIGGER} collect_ok=${OK}" >> heartbeat.log
+          echo "$NOW" > .keepalive
 
-      - name: 💾 提交更新
+      - name: 💾 一次性提交全部变更
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: |
-            chore: 更新 IP 列表
+            chore: 更新 IP + 心跳
             • 触发：${{ steps.debug.outputs.trigger_type }}
-            • 时间：$(date '+%Y-%m-%d %H:%M:%S')
-          file_pattern: 'ip.txt ipv6.txt non_us_ips/* heartbeat.log'
+            • 时间：${{ steps.debug.outputs.run_at }}
+          file_pattern: 'ip.txt ipv6.txt non_us_ips/* heartbeat.log .keepalive'
           skip_fetch: true
-
-      - name: Keepalive，防止定时休眠
-        run: |
-          echo "$(date '+%Y-%m-%d %H:%M:%S')" > .keepalive
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add .keepalive
-          git commit -m "keepalive" || true
 
   cleanup:
     name: 🧹 清理旧运行记录
